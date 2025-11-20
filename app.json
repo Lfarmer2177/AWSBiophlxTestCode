@@ -3,6 +3,11 @@
     "name": "biophlxAppTestAWS",
     "slug": "biophlxAppTestAWS",
     "version": "1.0.0",
+     "plugins": [
+      [
+        "react-native-ble-plx"
+      ]
+    ],
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
