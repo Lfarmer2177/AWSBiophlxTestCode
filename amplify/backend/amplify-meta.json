@@ -1,0 +1,58 @@
+{
+  "providers": {
+    "awscloudformation": {
+      "AuthRoleName": "amplify-biophlxapptestaws-dev-2f446-authRole",
+      "UnauthRoleArn": "arn:aws:iam::054799133127:role/amplify-biophlxapptestaws-dev-2f446-unauthRole",
+      "AuthRoleArn": "arn:aws:iam::054799133127:role/amplify-biophlxapptestaws-dev-2f446-authRole",
+      "Region": "us-east-2",
+      "DeploymentBucketName": "amplify-biophlxapptestaws-dev-2f446-deployment",
+      "UnauthRoleName": "amplify-biophlxapptestaws-dev-2f446-unauthRole",
+      "StackName": "amplify-biophlxapptestaws-dev-2f446",
+      "StackId": "arn:aws:cloudformation:us-east-2:054799133127:stack/amplify-biophlxapptestaws-dev-2f446/f6d09ab0-b158-11f0-9139-0aea65d3193f",
+      "AmplifyAppId": "d3ii4fc3vz9hbh"
+    }
+  },
+  "auth": {
+    "biophlxapptestaws257413a0": {
+      "service": "Cognito",
+      "providerPlugin": "awscloudformation",
+      "dependsOn": [],
+      "customAuth": false,
+      "frontendAuthConfig": {
+        "socialProviders": [],
+        "usernameAttributes": [
+          "EMAIL"
+        ],
+        "signupAttributes": [
+          "EMAIL"
+        ],
+        "passwordProtectionSettings": {
+          "passwordPolicyMinLength": 8,
+          "passwordPolicyCharacters": []
+        },
+        "mfaConfiguration": "OFF",
+        "mfaTypes": [
+          "SMS"
+        ],
+        "verificationMechanisms": [
+          "EMAIL"
+        ]
+      },
+      "providerMetadata": {
+        "s3TemplateURL": "https://s3.amazonaws.com/amplify-biophlxapptestaws-dev-2f446-deployment/amplify-cfn-templates/auth/biophlxapptestaws257413a0-cloudformation-template.json",
+        "logicalId": "authbiophlxapptestaws257413a0"
+      },
+      "lastPushTimeStamp": "2025-10-26T21:13:23.672Z",
+      "output": {
+        "UserPoolId": "us-east-2_3BNbuJy6I",
+        "AppClientIDWeb": "12nhb6c93tjflq5o9j3l50pdbr",
+        "AppClientID": "3mge95vsgu9u3nvko357n1ps6d",
+        "IdentityPoolId": "us-east-2:640e4946-fbe4-4462-bdef-5d42dede2d20",
+        "UserPoolArn": "arn:aws:cognito-idp:us-east-2:054799133127:userpool/us-east-2_3BNbuJy6I",
+        "IdentityPoolName": "biophlxapptestaws257413a0_identitypool_257413a0__dev",
+        "UserPoolName": "biophlxapptestaws257413a0_userpool_257413a0"
+      },
+      "lastPushDirHash": "rqbcrdnhz9y0ETIwSHAfne0SUi8="
+    }
+  }
+}

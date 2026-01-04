@@ -1,0 +1,40 @@
+    const imageUri = selected.exercise_image || PLACEHOLDER;
+
+    return (
+      <View style={styles.detailCard}>
+        <Text style={styles.detailTitle}>{selected.name || selected.exercise_id}</Text>
+        <Image source={{ uri: imageUri }} style={styles.detailImage} resizeMode="cover" />
+
+        <View style={styles.detailSection}>
+          <Text style={styles.detailHeading}>Equipment Required</Text>
+          {equipment.length ? (
+            equipment.map((entry, idx) => (
+              <Text key={idx} style={styles.detailText}>
+                • {entry}
+              </Text>
+            ))
+          ) : (
+            <Text style={styles.muted}>None listed.</Text>
+          )}
+        </View>
+
+        <View style={styles.detailSection}>
+          <Text style={styles.detailHeading}>Instructions</Text>
+          {instructions.length ? (
+            instructions.map((entry, idx) => (
+              <Text key={idx} style={styles.detailText}>
+                {idx + 1}. {entry}
+              </Text>
+            ))
+          ) : (
+            <Text style={styles.muted}>No instructions provided.</Text>
+          )}
+        </View>
+      </View>
+    );
+  };
+
+  return (
+    <View style={{ flex: 1 }}>
+    <FlatList
+      data={items}
