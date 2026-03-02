@@ -24,6 +24,7 @@ import base64 from 'react-native-base64';
 import { Svg, Polygon, Line, Circle, Text as SvgText } from 'react-native-svg';
 import { v4 as uuidv4 } from 'uuid';
 import { generateClient } from 'aws-amplify/api';
+import { getCurrentUser } from 'aws-amplify/auth';
 import { listExercises } from '../graphql/queries';
 
 const WORKOUT_LIBRARY = [
@@ -389,11 +390,12 @@ const [secondaryFeedback, setSecondaryFeedback] = useState({ ROM: 0 });
   const [bleState, setBleState] = useState(null);
   const [inputValue, setInputValue] = useState('');
   const [deviceSlotToConnect, setDeviceSlotToConnect] = useState('primary');
+  const [customerId, setCustomerId] = useState(route?.params?.customer_id || null);
   const sessionIdRef = useRef(null);
   const sessionItemIndexMap = useRef({});
   const sessionItemCounterRef = useRef(0);
   const sessionRepCountMap = useRef({});
-  const customerId = route?.params?.customer_id || null;
+
   const [maxRom, setMaxRom] = useState(120);
   const prevRepsRef = useRef(0);
   const prevSetsRef = useRef(0);
@@ -951,7 +953,7 @@ const CREATE_SESSION_ITEM_SET = /* GraphQL */ `
     if (sessionIdRef.current) {
       return sessionIdRef.current;
     }
-    const session_id = uuidv4();
+    const session_id = `${uuidv4()}-${Date.now()}`;
     const workout_date = new Date().toISOString();
     const workout_id = workoutPlan?.workout_id || null;
     await client.graphql({

@@ -55,7 +55,21 @@ const LIST_TRAINERS_BY_USER = /* GraphQL */ `
 
 const CREATE_TRAINER = /* GraphQL */ `
   mutation CreateTrainer($input: CreateTrainerInput!) {
-    createTrainer(input: $input) { trainer_id }
+    createTrainer(input: $input) {
+      trainer_id
+      user_id
+      training_focus
+      total_clients
+      total_revenue
+      workouts_sold
+      services_sold
+      created_at
+      updated_at
+      stripe_account_id
+      stripe_onboarded
+      stripe_charges_enabled
+      stripe_payouts_enabled
+    }
   }
 `;
 
@@ -144,79 +158,58 @@ export default function ProfileSetup({ navigation, route }) {
 
       console.log('Updating profile for:', user_id);
 
-      const ageVal = form.age?.toString().trim() ? parseInt(form.age, 10) : null;
-      const weightVal = form.current_weight?.toString().trim() ? parseFloat(form.current_weight) : null;
-      const heightVal = form.height_inches?.toString().trim() ? parseFloat(form.height_inches) : null;
+      const ageVal = form.age && !isNaN(form.age) ? parseInt(form.age, 10) : null;
+      const weightVal = form.current_weight && !isNaN(form.current_weight) ? parseFloat(form.current_weight) : null;
+      const heightVal = form.height_inches && !isNaN(form.height_inches) ? parseFloat(form.height_inches) : null;
 
       // Create-first strategy (avoids getUser dependency while resolvers are finalized)
       const attrs = await fetchUserAttributes().catch(() => ({}));
-      const email = attrs?.email || '';
-      console.log('Profile save payload', {
+      const email = attrs?.email || 'no-email@biophlx.com';
+      
+      const user_input = {
         user_id,
         first_name: form.first_name || null,
         last_name: form.last_name || null,
         gender: form.gender || null,
         city: form.city || null,
         state: form.state || null,
-        age: form.age || null,
-        current_weight: form.current_weight || null,
-        height_inches: form.height_inches || null,
+        age: ageVal,
+        current_weight: weightVal,
+        height_inches: heightVal,
         fitness_goal: form.fitness_goal || null,
         workout_location: form.workout_location || null,
         bio: form.bio || null,
-        role: form.role || null,
-        email,
-      });
+        role: form.role || "customer",
+      };
+
+      const create_user_input = {
+        ...user_input,
+        email: email
+      };
+
+      console.log('ProfileSetup: User save payload:', JSON.stringify(create_user_input, null, 2));
 
       // Try to create; ignore conflicts
       try {
-        const res = await client.graphql({
+        await client.graphql({
           query: createUserMutation,
-          variables: {
-            input: {
-              user_id,
-              email,
-              first_name: form.first_name || null,
-              last_name: form.last_name || null,
-              gender: form.gender || null,
-              city: form.city || null,
-              state: form.state || null,
-              age: ageVal,
-              current_weight: weightVal,
-              height_inches: heightVal,
-              fitness_goal: form.fitness_goal || null,
-              workout_location: form.workout_location || null,
-              bio: form.bio || null,
-            },
-          },
+          variables: { input: create_user_input },
           authMode: 'userPool',
         });
       } catch (e) {
-        console.log('createUser ignored:', e?.errors?.[0]?.message || e?.message || String(e));
+        console.log('createUser ignored/failed:', e?.errors?.[0]?.message || e?.message);
       }
 
       // Update User (idempotent; sets current values)
-      await client.graphql({
-        query: updateUserMutation,
-        variables: {
-          input: {
-            user_id,
-            first_name: form.first_name || null,
-            last_name: form.last_name || null,
-            gender: form.gender || null,
-            city: form.city || null,
-            state: form.state || null,
-            age: ageVal,
-            current_weight: weightVal,
-            height_inches: heightVal,
-            fitness_goal: form.fitness_goal || null,
-            workout_location: form.workout_location || null,
-            bio: form.bio || null,
-            role: form.role || null,
-          },
-        },
-        authMode: 'userPool',
-      });
+      try {
+        await client.graphql({
+          query: updateUserMutation,
+          variables: { input: user_input },
+          authMode: 'userPool',
+        });
+      } catch (e) {
+        console.log('updateUser failed:', e?.errors?.[0]?.message || e?.message);
+      }
       console.log('Update user payload sent to API', {
         user_id,
         first_name: form.first_name || null,
@@ -273,46 +266,57 @@ export default function ProfileSetup({ navigation, route }) {
       // If the user identifies as a trainer, ensure a trainer row exists
       if ((form.role || '').toLowerCase() === 'trainer') {
         const now = new Date().toISOString();
-        console.log('Create trainer payload', {
-          trainer_id: 'uuid-will-be-generated',
-          user_id,
-          training_focus: form.fitness_focus || null,
-          total_clients: 0,
-          total_revenue: 0,
-          workouts_sold: 0,
-          services_sold: 0,
-          created_at: now,
-          updated_at: now,
-        });
+        const current_user_id = user_id;
+        console.log('ProfileSetup: Checking for existing trainer for user_id:', current_user_id);
+        
         try {
           const trainerRes = await client.graphql({
             query: LIST_TRAINERS_BY_USER,
-            variables: { user_id },
+            variables: { user_id: current_user_id },
             authMode: 'userPool',
           });
-          const existingTrainer = trainerRes?.data?.listTrainers?.items?.[0];
+          // const existingTrainer = trainerRes?.data?.listTrainers?.items?.[0];
+                const items = trainerRes?.data?.listTrainers?.items || [];
+      const existingTrainer = items.find(item => item.user_id === user_id);
+
           if (!existingTrainer) {
+            console.log('ProfileSetup: No existing trainer found, proceeding with creation.');
             const newTrainerId = uuidv4();
-            await client.graphql({
+            const trainer_input = {
+              trainer_id: newTrainerId,
+              user_id: user_id,
+              total_clients: 0,
+              total_revenue: 0.0,
+              workouts_sold: 0,
+              services_sold: 0,
+              created_at: now,
+              updated_at: now,
+              stripe_account_id: "",
+              stripe_onboarded: false,
+              stripe_charges_enabled: false,
+              stripe_payouts_enabled: false,
+              training_focus: form.fitness_focus && Array.isArray(form.fitness_focus) 
+                ? form.fitness_focus.join(',') 
+                : (typeof form.fitness_focus === 'string' && form.fitness_focus.trim() !== '' 
+                  ? form.fitness_focus 
+                  : "General Fitness")
+            };
+
+            console.log('ProfileSetup: Creating NEW trainer with input:', JSON.stringify(trainer_input, null, 2));
+
+            const result = await client.graphql({
               query: CREATE_TRAINER,
               variables: {
-                input: {
-                  trainer_id: newTrainerId,
-                  user_id,
-                  training_focus: form.fitness_focus || null,
-                  total_clients: 0,
-                  total_revenue: 0,
-                  workouts_sold: 0,
-                  services_sold: 0,
-                  created_at: now,
-                  updated_at: now,
-                },
+                input: trainer_input,
               },
               authMode: 'userPool',
             });
+            console.log('ProfileSetup: Successfully created trainer record result:', result);
+          } else {
+            console.log('ProfileSetup: Existing trainer found, skipping creation:', existingTrainer.trainer_id);
           }
         } catch (err) {
-          console.log('Create trainer failed', err?.errors?.[0]?.message || err?.message || String(err));
+          console.log('ProfileSetup: Create/Check trainer failed', err?.errors?.[0]?.message || err?.message || JSON.stringify(err));
         }
       }
 

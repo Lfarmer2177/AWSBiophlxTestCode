@@ -12,7 +12,7 @@ import {
 import { generateClient } from 'aws-amplify/api';
 import { getCurrentUser, signOut } from 'aws-amplify/auth';
 import { v4 as uuidv4 } from 'uuid';
-import FontAwesome5 from 'react-native-vector-icons/FontAwesome5';
+import { FontAwesome5 } from '@expo/vector-icons';
 import Body from '../Components/react-native-body-highlighter';
 import Colors from '../Theme/Colors';
 import {
@@ -346,29 +346,28 @@ export default function HomeScreen({ navigation }) {
           if (g === 'female' || g === 'male') setUserGender(g);
           const r = (data?.getUser?.role || '').toLowerCase();
           setUserRole(r);
-        } catch {}
-        if ((userRole || '').toLowerCase() === 'trainer') {
-          const { data } = await client.graphql({
-            query: LIST_TRAINERS_BY_USER,
-            variables: { user_id },
-          });
-          const trainer = data?.listTrainers?.items?.[0];
-          if (trainer?.trainer_id) {
-            setTrainerId(trainer.trainer_id);
-            console.log('User has trainer_id:', trainer.trainer_id);
-          } else {
-            setTrainerId(null);
-            console.log('User has no trainer_id');
-          }
+        } catch (e) {
+          console.log('HomeScreen: Fetch user role failed', e);
+        }
+
+        // Even if role isn't 'trainer' yet in DB, we check if a trainer record exists
+        const { data: tData } = await client.graphql({
+          query: LIST_TRAINERS_BY_USER,
+          variables: { user_id },
+        });
+        const trainer = tData?.listTrainers?.items?.[0];
+        if (trainer?.trainer_id) {
+          setTrainerId(trainer.trainer_id);
+          console.log('HomeScreen: User has trainer_id:', trainer.trainer_id);
         } else {
           setTrainerId(null);
-          console.log('User role not trainer; no trainer_id');
+          console.log('HomeScreen: No trainer record found for user_id:', user_id);
         }
       } catch (err) {
-        console.log('Fetch trainer for dashboard failed', err);
+        console.log('HomeScreen: Fetch trainer for dashboard failed', err);
       }
     })();
-  }, [client, userRole]);
+  }, [client]);
 
   const ensureTrainerId = useCallback(async () => {
     if ((userRole || '').toLowerCase() !== 'trainer') return null;
@@ -380,7 +379,8 @@ export default function HomeScreen({ navigation }) {
         query: LIST_TRAINERS_BY_USER,
         variables: { user_id },
       });
-      const trainer = listData?.listTrainers?.items?.[0];
+      const items = listData?.listTrainers?.items || [];
+      const trainer = items.find(item => item.user_id === user_id);
       if (trainer?.trainer_id) {
         setTrainerId(trainer.trainer_id);
         console.log('Trainer ID (existing):', trainer.trainer_id);
@@ -827,66 +827,45 @@ export default function HomeScreen({ navigation }) {
     );
   };
 
-  const resolveCustomerId = async () => {
-    try {
-      const current = await getCurrentUser();
-      const user_id = current?.userId || current?.username;
-      const { data } = await client.graphql({
-        query: LIST_CUSTOMERS_BY_USER,
-        variables: { user_id },
-      });
-      const existing = data?.listCustomers?.items?.[0]?.customer_id || null;
-      if (existing) return existing;
-      const newId = uuidv4();
-      const res = await client.graphql({
-        query: CREATE_CUSTOMER,
-        variables: { input: { customer_id: newId, user_id, preferred_workout_location: null, fitness_focus: null } },
-      });
-      const resolved = res?.data?.createCustomer?.customer_id || newId;
-      console.log('Resolved customer_id:', resolved);
-      return resolved;
-    } catch (e) {
-      console.log('Resolve customer_id failed:', e);
-      return null;
-    }
-  };
-
   const handleAction = async (key) => {
     switch (key) {
       case 'runner':
-      case 'builder':
-      case 'library':
-      case 'sessions':
-      case 'exercises':
-      case 'trainerDirectory': {
-        const customer_id = await resolveCustomerId();
-        if (!customer_id) return;
-        if (key === 'runner') navigation.navigate('WorkoutRunner', { customer_id });
-        if (key === 'builder') {
-          const tId = await ensureTrainerId();
-          navigation.navigate('CreateWorkout', { customer_id, trainer_id: tId || undefined });
-        }
-        if (key === 'library') navigation.navigate('WorkoutLibrary');
-        if (key === 'sessions') navigation.navigate('SessionDashboard');
-        if (key === 'exercises') navigation.navigate('ExerciseLibrary');
-        if (key === 'trainerDirectory') navigation.navigate('TrainerDirectory');
+        navigation.navigate('WorkoutRunner');
+        break;
+      case 'builder': {
+        const tId = await ensureTrainerId();
+        navigation.navigate('CreateWorkout', { trainer_id: tId || undefined });
         break;
       }
+      case 'library':
+        navigation.navigate('WorkoutLibrary');
+        break;
+      case 'sessions':
+        navigation.navigate('SessionDashboard');
+        break;
+      case 'exercises':
+        navigation.navigate('ExerciseLibrary');
+        break;
+      case 'trainerDirectory':
+        navigation.navigate('TrainerDirectory');
+        break;
       case 'profile':
         navigation.navigate('ProfileSetup', { next: 'Home' });
         break;
       case 'trainerDash': {
-        const id = await ensureTrainerId();
-        if (id) {
-          console.log('Navigating to TrainerDashboard with trainer_id:', id);
-          navigation.navigate('TrainerDashboard', { trainer_id: id });
-        } else {
-          Alert.alert('Trainer not found', 'No trainer record exists for this user. Please set your role to Trainer and save your profile.');
-        }
+        const tId = await ensureTrainerId();
+        if (tId) navigation.navigate('TrainerDashboard', { trainer_id: tId });
         break;
       }
-      default:
+      case 'signOut':
+        try {
+          await signOut();
+        } catch (err) {
+          console.log('Sign out failed', err);
+        }
         break;
+      default:
+        Alert.alert('Coming Soon', `The ${key} feature is under development.`);
     }
   };
 

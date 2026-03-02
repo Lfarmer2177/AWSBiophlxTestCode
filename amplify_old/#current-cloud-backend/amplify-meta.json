@@ -14,30 +14,35 @@
   },
   "auth": {
     "biophlxapptestaws257413a0": {
-      "customAuth": false,
+      "service": "Cognito",
+      "providerPlugin": "awscloudformation",
       "dependsOn": [],
+      "customAuth": false,
       "frontendAuthConfig": {
-        "mfaConfiguration": "OFF",
-        "mfaTypes": [
-          "SMS"
+        "socialProviders": [],
+        "usernameAttributes": [
+          "EMAIL"
+        ],
+        "signupAttributes": [
+          "EMAIL"
         ],
         "passwordProtectionSettings": {
           "passwordPolicyMinLength": 8,
           "passwordPolicyCharacters": []
         },
-        "signupAttributes": [
-          "EMAIL"
-        ],
-        "socialProviders": [],
-        "usernameAttributes": [
-          "EMAIL"
+        "mfaConfiguration": "OFF",
+        "mfaTypes": [
+          "SMS"
         ],
         "verificationMechanisms": [
           "EMAIL"
         ]
       },
-      "providerPlugin": "awscloudformation",
-      "service": "Cognito",
+      "providerMetadata": {
+        "s3TemplateURL": "https://s3.amazonaws.com/amplify-biophlxapptestaws-dev-2f446-deployment/amplify-cfn-templates/auth/biophlxapptestaws257413a0-cloudformation-template.json",
+        "logicalId": "authbiophlxapptestaws257413a0"
+      },
+      "lastPushTimeStamp": "2025-10-25T04:19:57.945Z",
       "output": {
         "UserPoolId": "us-east-2_3BNbuJy6I",
         "AppClientIDWeb": "12nhb6c93tjflq5o9j3l50pdbr",
@@ -47,11 +52,7 @@
         "IdentityPoolName": "biophlxapptestaws257413a0_identitypool_257413a0__dev",
         "UserPoolName": "biophlxapptestaws257413a0_userpool_257413a0"
       },
-      "lastPushTimeStamp": "2026-01-18T10:46:20.660Z",
-      "providerMetadata": {
-        "s3TemplateURL": "https://s3.amazonaws.com/amplify-biophlxapptestaws-dev-2f446-deployment/amplify-cfn-templates/auth/biophlxapptestaws257413a0-cloudformation-template.json",
-        "logicalId": "authbiophlxapptestaws257413a0"
-      }
+      "lastPushDirHash": "rqbcrdnhz9y0ETIwSHAfne0SUi8="
     }
   }
 }

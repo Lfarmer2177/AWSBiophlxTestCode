@@ -7,7 +7,7 @@ import { getCurrentUser } from 'aws-amplify/auth';
 const LIST_TRAINERS_BY_USER = /* GraphQL */ `
   query ListTrainers($user_id: ID!) {
     listTrainers(filter: { user_id: { eq: $user_id } }, limit: 1) {
-      items { trainer_id user_id training_focus total_clients total_revenue workouts_sold services_sold }
+      items { trainer_id user_id training_focus total_clients total_revenue workouts_sold services_sold workouts_created }
       nextToken
     }
   }
@@ -16,7 +16,7 @@ const LIST_TRAINERS_BY_USER = /* GraphQL */ `
 const LIST_TRAINERS_SCAN = /* GraphQL */ `
   query ListTrainersScan($limit: Int) {
     listTrainers(limit: $limit) {
-      items { trainer_id user_id training_focus total_clients total_revenue workouts_sold services_sold }
+      items { trainer_id user_id training_focus total_clients total_revenue workouts_sold services_sold workouts_created }
       nextToken
     }
   }
@@ -25,7 +25,7 @@ const LIST_TRAINERS_SCAN = /* GraphQL */ `
 const GET_TRAINER = /* GraphQL */ `
   query GetTrainer($trainer_id: ID!) {
     getTrainer(trainer_id: $trainer_id) {
-      trainer_id user_id training_focus total_clients total_revenue workouts_sold services_sold
+      trainer_id user_id training_focus total_clients total_revenue workouts_sold services_sold workouts_created
     }
   }
 `;
@@ -51,58 +51,56 @@ export default function TrainerDashboard({ route, navigation }) {
     setError(null);
     try {
       const explicitTrainerId = route?.params?.trainer_id;
+      const current = await getCurrentUser();
+      const user_id = current?.userId || current?.username;
+
+      console.log('TrainerDashboard: Loading for user_id:', user_id, 'explicitTrainerId:', explicitTrainerId);
+
+      let t = null;
       if (explicitTrainerId) {
         console.log('TrainerDashboard: trying trainer_id from route', explicitTrainerId);
         const { data } = await client.graphql({
           query: GET_TRAINER,
           variables: { trainer_id: explicitTrainerId },
         });
-        console.log('TrainerDashboard getTrainer result', data);
-      const t = data?.getTrainer || null;
-      if (t) {
-        setTrainer(t);
-        // Fetch workouts built by this trainer
-        try {
-          const { data: workoutsData } = await client.graphql({
-            query: LIST_WORKOUTS_BY_TRAINER,
-            variables: { trainer_id: t.trainer_id, limit: 100 },
-          });
-          const list = workoutsData?.listWorkoutsByTrainer;
-          const workouts = Array.isArray(list) ? list : Array.isArray(list?.items) ? list.items : [];
-          setWorkoutCount(workouts.length);
-        } catch (workErr) {
-          console.log('TrainerDashboard: listWorkoutsByTrainer failed', workErr);
-          setWorkoutCount(0);
-        }
-        setLoading(false);
-        return;
-      } else {
-        setError(`No trainer found for trainer_id=${explicitTrainerId}`);
-        setTrainer(null);
-          setLoading(false);
-          return;
+        t = data?.getTrainer;
+        if (t) {
+          console.log('TrainerDashboard: Found trainer by explicit ID:', t.trainer_id, 'owner user_id:', t.user_id);
+          // Security check: ensure this trainer record belongs to the current user
+          if (t.user_id !== user_id) {
+            console.log('TrainerDashboard: Ownership mismatch! Explicit ID belongs to', t.user_id, 'but current user is', user_id);
+            t = null;
+          }
+        } else {
+          console.log('TrainerDashboard: No trainer found for explicit ID:', explicitTrainerId);
         }
       }
 
-      const current = await getCurrentUser();
-      const user_id = current?.userId || current?.username;
-      console.log('TrainerDashboard: fetching trainer for user_id', user_id);
-      const { data } = await client.graphql({
-        query: LIST_TRAINERS_BY_USER,
-        variables: { user_id },
-      });
-      console.log('TrainerDashboard listTrainers result', data);
-      let t = data?.listTrainers?.items?.[0] || null;
+      if (!t) {
+        console.log('TrainerDashboard: fetching trainer for user_id', user_id);
+        const { data } = await client.graphql({
+          query: LIST_TRAINERS_BY_USER,
+          variables: { user_id },
+        });
+        const items = data?.listTrainers?.items || [];
+        t = items.find(item => item.user_id === user_id) || null;
+        if (t) {
+          console.log('TrainerDashboard: Found trainer by user_id:', t.trainer_id);
+        }
+      }
 
       // Fallback: shallow scan and pick a matching user_id if filter failed
       if (!t) {
+        console.log('TrainerDashboard: Fallback scan for user_id', user_id);
         const { data: scanData } = await client.graphql({
           query: LIST_TRAINERS_SCAN,
           variables: { limit: 50 },
         });
-        console.log('TrainerDashboard fallback scan result', scanData);
         const scanItems = scanData?.listTrainers?.items || [];
         t = scanItems.find((item) => item?.user_id === user_id) || null;
+        if (t) {
+          console.log('TrainerDashboard: Found trainer via fallback scan:', t.trainer_id);
+        }
       }
 
       if (!t) {
@@ -135,12 +133,18 @@ export default function TrainerDashboard({ route, navigation }) {
     loadTrainer();
   }, [loadTrainer]);
 
-  const renderStat = (label, value) => (
-    <View style={styles.statCard} key={label}>
-      <Text style={styles.statLabel}>{label}</Text>
-      <Text style={styles.statValue}>{value ?? 0}</Text>
-    </View>
-  );
+  const renderStat = (label, value) => {
+    let displayValue = value ?? 0;
+    if (label === 'Total Revenue') {
+      displayValue = `$${Number(displayValue).toFixed(2)}`;
+    }
+    return (
+      <View style={styles.statCard} key={label}>
+        <Text style={styles.statLabel}>{label}</Text>
+        <Text style={styles.statValue}>{displayValue}</Text>
+      </View>
+    );
+  };
 
   return (
     <ScrollView
@@ -182,7 +186,7 @@ export default function TrainerDashboard({ route, navigation }) {
             </TouchableOpacity>
           </View>
           <View style={styles.statGrid}>
-            {renderStat('Workouts Created', workoutCount)}
+            {renderStat('Workouts Created', trainer.workouts_created ?? workoutCount)}
             {renderStat('Services Sold', trainer.services_sold)}
             {renderStat('Total Clients', trainer.total_clients)}
             {renderStat('Total Revenue', trainer.total_revenue)}

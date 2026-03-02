@@ -157,22 +157,6 @@ export default function SessionsDashboard() {
     }
   }, []);
 
-  const resolveCustomerId = useCallback(async () => {
-    try {
-      const current = await getCurrentUser();
-      const user_id = current?.userId || current?.username;
-      if (!user_id) return null;
-      const { data } = await client.graphql({
-        query: LIST_CUSTOMERS_BY_USER,
-        variables: { user_id },
-      });
-      return data?.listCustomers?.items?.[0]?.customer_id || null;
-    } catch (err) {
-      console.log('Resolve customer failed', err);
-      return null;
-    }
-  }, [client]);
-
   const fetchSessions = useCallback(
     async (custId) => {
       if (!custId) {
@@ -215,30 +199,36 @@ export default function SessionsDashboard() {
   }, [sessions, normalizeDate, selectedDate]);
 
   useEffect(() => {
-    let mounted = true;
     (async () => {
-      // Preload exercises for muscle_group lookup
       try {
-        const { data } = await client.graphql({ query: listExercises, variables: { limit: 500 } });
-        const exItems = asList(data?.listExercises);
-        const map = {};
-        exItems.forEach((ex) => {
-          map[ex.exercise_id] = ex;
-        });
-        if (mounted) setExerciseMap(map);
-      } catch (err) {
-        console.log('Fetch exercises failed', err);
-      }
+        const current = await getCurrentUser();
+        const user_id = current?.userId || current?.username;
+        if (!user_id) {
+          setError('User not authenticated.');
+          setLoading(false);
+          return;
+        }
 
-      const custId = await resolveCustomerId();
-      if (!mounted) return;
-      setCustomerId(custId);
-      await fetchSessions(custId);
+        const { data } = await client.graphql({
+          query: LIST_CUSTOMERS_BY_USER,
+          variables: { user_id },
+        });
+        const items = data?.listCustomers?.items || [];
+        const cid = items[0]?.customer_id;
+        if (cid) {
+          setCustomerId(cid);
+          await fetchSessions(cid);
+        } else {
+          setError('No customer profile found for this user.');
+          setLoading(false);
+        }
+      } catch (err) {
+        console.log('Load initial data failed', err);
+        setError('Failed to load user profile.');
+        setLoading(false);
+      }
     })();
-    return () => {
-      mounted = false;
-    };
-  }, [fetchSessions, resolveCustomerId, asList]);
+  }, [fetchSessions, client]);
 
   const ensureSessionDetails = useCallback(
     async (session_id) => {

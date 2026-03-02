@@ -1,0 +1,50 @@
+Stripe Marketplace Implementation Plan
+This plan outlines the steps to implement the Stripe marketplace integration for the Biophlx platform, enabling trainer onboarding and secure checkout for workouts and services.
+
+User Review Required
+IMPORTANT
+
+API Configuration: The existing Lambda functions (accounts.create, accountlinks.create, and checkout logic) are not yet configured in 
+aws-exports.js
+. I need the REST API endpoint URL or the AppSync mutation names associated with these functions to properly link them to the UI.
+
+CAUTION
+
+Dependencies: I will need to install @stripe/stripe-react-native and expo-web-browser. Please confirm if there are any restrictions on adding these dependencies.
+
+Proposed Changes
+[Frontend - Onboarding]
+[MODIFY] 
+MonetizationSetup.js
+Implement handleEnablePayouts function.
+Invoke accounts.create Lambda to get a Stripe Account ID.
+Store the Stripe Account ID in the 
+Trainer
+ table (via AppSync mutation).
+Invoke accountlinks.create Lambda to get a Stripe onboarding URL.
+Use WebBrowser.openBrowserAsync to redirect the trainer to the Stripe-hosted onboarding UI.
+[Frontend - Marketplace]
+[MODIFY] 
+TrainerProfile.js
+Implement handlePurchase function for workout products and services.
+Invoke a Lambda function to create a Stripe Checkout Session or PaymentIntent, passing the trainer_id and price.
+Configure the payment split (95% to trainer, 5% platform fee).
+Use WebBrowser.openBrowserAsync to redirect the user to the Stripe Checkout UI.
+[Backend - Webhooks (Context)]
+Ensure the existing biophlx-stripe-handler Lambda correctly processes checkout.session.completed events.
+Update the Client-Permissions table in DynamoDB to grant access to purchased content.
+Verification Plan
+Manual Verification
+Trainer Onboarding:
+Register as a Trainer.
+Navigate to Monetization Setup.
+Click Enable Payouts.
+Verify redirection to Stripe onboarding.
+Complete onboarding and verify return to the app.
+Product Purchase:
+Register/Login as a Customer.
+Navigate to Trainer Directory and select a trainer.
+Click Purchase on a workout product.
+Verify redirection to Stripe Checkout.
+Complete test payment and verify return to the app.
+(Optional) Verify Client-Permissions update in DynamoDB if AWS access is available.

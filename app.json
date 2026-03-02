@@ -2,8 +2,9 @@
   "expo": {
     "name": "biophlxAppTestAWS",
     "slug": "biophlxAppTestAWS",
-    "version": "2.0.0",
-     "plugins": [
+    "version": "2.0.1",
+    "scheme": "biophlx",
+    "plugins": [
       [
         "react-native-ble-plx"
       ]
@@ -21,8 +22,14 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.londof.biophlxAppTestAWS",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
-      }
+        "ITSAppUsesNonExemptEncryption": false,
+        "NSCameraUsageDescription": "This app uses the camera to allow trainers to upload profile pictures and workout demonstrations.",
+        "NSPhotoLibraryUsageDescription": "This app accesses your photo library to allow trainers to upload profile pictures and workout demonstrations.",
+        "NSMicrophoneUsageDescription": "This app uses the microphone when recording workout demonstration videos.",
+        "NSBluetoothAlwaysUsageDescription": "This app uses Bluetooth to connect to Biophlx fitness equipment for real-time tracking.",
+        "NSBluetoothPeripheralUsageDescription": "This app uses Bluetooth to connect to Biophlx fitness equipment for real-time tracking."
+      },
+      "appleTeamId": "5F7CG99WV8"
     },
     "android": {
       "adaptiveIcon": {
@@ -30,7 +37,12 @@
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
-      "package": "com.londof.biophlxAppTestAWS"
+      "package": "com.londof.biophlxAppTestAWS",
+      "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_CONNECT"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"

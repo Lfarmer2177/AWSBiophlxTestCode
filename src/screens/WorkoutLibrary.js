@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   FlatList,
   Pressable,
+  RefreshControl,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -11,7 +12,58 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { generateClient } from 'aws-amplify/api';
 import { getCurrentUser } from 'aws-amplify/auth';
-import { listWorkoutsByCustomer, listWorkoutItemsByWorkout } from '../graphql/queries';
+import { listWorkoutsByCustomer, listWorkoutItemsByWorkout, listPermissionsByUser } from '../graphql/queries';
+
+const LIST_PRODUCTS_BY_TRAINER = /* GraphQL */ `
+  query ListWorkoutProductsByTrainer($trainer_id: ID!, $limit: Int) {
+    listWorkoutProductsByTrainer(trainer_id: $trainer_id, limit: $limit) {
+      workout_product_id
+      name
+      workout_id
+      created_at
+      updated_at
+    }
+  }
+`;
+
+const LIST_SERVICES_BY_TRAINER = /* GraphQL */ `
+  query ListVirtualTrainingServicesByTrainer($trainer_id: ID!, $limit: Int) {
+    listVirtualTrainingServicesByTrainer(trainer_id: $trainer_id, limit: $limit) {
+      items {
+        service_id
+        service_name
+        workout_ids
+        workout_products
+        created_at
+        updated_at
+      }
+    }
+  }
+`;
+
+const LIST_WORKOUTS_BY_TRAINER = /* GraphQL */ `
+  query ListWorkoutsByTrainer($trainer_id: ID!, $limit: Int) {
+    listWorkoutsByTrainer(trainer_id: $trainer_id, limit: $limit) {
+      workout_id
+      name
+      created_at
+      updated_at
+    }
+  }
+`;
+
+
+const GET_WORKOUT_PRODUCT = /* GraphQL */ `
+  query GetWorkoutProduct($trainer_id: ID!, $workout_product_id: ID!) {
+    getWorkoutProduct(trainer_id: $trainer_id, workout_product_id: $workout_product_id) {
+      workout_product_id
+      name
+      workout_id
+      created_at
+      updated_at
+    }
+  }
+`;
 
 const LIST_CUSTOMERS_BY_USER = /* GraphQL */ `
   query ListCustomers($user_id: ID!) {
@@ -22,6 +74,29 @@ const LIST_CUSTOMERS_BY_USER = /* GraphQL */ `
   }
 `;
 
+const GET_WORKOUT = /* GraphQL */ `
+  query GetWorkout($workout_id: ID!) {
+    getWorkout(workout_id: $workout_id) {
+      workout_id
+      name
+      created_at
+      updated_at
+    }
+  }
+`;
+
+const GET_SERVICE = /* GraphQL */ `
+  query GetService($trainer_id: ID!, $service_id: ID!) {
+    getVirtualTrainingService(trainer_id: $trainer_id, service_id: $service_id) {
+      service_id
+      service_name
+      workout_ids
+      workout_products
+      created_at
+      updated_at
+    }
+  }
+`;
 export default function WorkoutLibrary({ navigation }) {
   const client = useMemo(() => generateClient({ authMode: 'userPool' }), []);
   const [customerId, setCustomerId] = useState(null);
@@ -31,6 +106,17 @@ export default function WorkoutLibrary({ navigation }) {
   const [expandedId, setExpandedId] = useState(null);
   const [itemsMap, setItemsMap] = useState({});
   const [itemsLoading, setItemsLoading] = useState({});
+  const [refreshing, setRefreshing] = useState(false);
+
+  const unwrapString = (val) => {
+    if (val?.S) return val.S;
+    if (val?.N) return val.N;
+    if (typeof val === 'string' || typeof val === 'number') return val;
+    if (typeof val === 'object' && val !== null) {
+      return val.S || val.value || JSON.stringify(val);
+    }
+    return val;
+  };
 
   const fetchWorkouts = useCallback(
     async (custId) => {
@@ -38,18 +124,229 @@ export default function WorkoutLibrary({ navigation }) {
       try {
         setLoading(true);
         setError(null);
-        const { data } = await client.graphql({
+
+        const current = await getCurrentUser();
+        const user_id = current?.userId || current?.username;
+
+        // 1. Fetch direct workouts (original behavior)
+        const { data: directData } = await client.graphql({
           query: listWorkoutsByCustomer,
           variables: { customer_id: custId, limit: 50 },
         });
-        const items = data?.listWorkoutsByCustomer ?? [];
-        const normalized = (items || []).map((row) => ({
+        const directItems = directData?.listWorkoutsByCustomer ?? [];
+        
+        // 2. Fetch permissions for purchased items
+        let purchasedItems = [];
+        try {
+          const { data: permData } = await client.graphql({
+            query: listPermissionsByUser,
+            variables: { user_id, limit: 100 }
+          });
+          
+          const perms = permData?.listPermissionsByUser?.items || [];
+          console.log('WorkoutLibrary: Found permissions:', perms.length);
+          
+          // Group by trainer_id for efficient fetching
+          const permsByTrainer = {};
+          for (const p of perms) {
+            const pStatus = unwrapString(p.status);
+            if (pStatus !== 'active') continue;
+
+            const tId = unwrapString(p.trainer_id) || 'unknown';
+            if (!permsByTrainer[tId]) permsByTrainer[tId] = [];
+            permsByTrainer[tId].push(p);
+          }
+
+          // Fetch products/services/workouts for each trainer and match
+          for (const tId of Object.keys(permsByTrainer)) {
+            try {
+              console.log('WorkoutLibrary: Fetching resources for trainer:', tId);
+              
+              const [prodRes, svcRes, wrkRes] = await Promise.all([
+                client.graphql({
+                  query: LIST_PRODUCTS_BY_TRAINER,
+                  variables: { trainer_id: tId, limit: 100 }
+                }).catch(() => ({ data: {} })),
+                client.graphql({
+                  query: LIST_SERVICES_BY_TRAINER,
+                  variables: { trainer_id: tId, limit: 100 }
+                }).catch(() => ({ data: {} })),
+                client.graphql({
+                  query: LIST_WORKOUTS_BY_TRAINER,
+                  variables: { trainer_id: tId, limit: 200 }
+                }).catch(() => ({ data: {} }))
+              ]);
+
+              const trainerProducts = prodRes.data?.listWorkoutProductsByTrainer || [];
+              const trainerServices = svcRes.data?.listVirtualTrainingServicesByTrainer?.items || [];
+              const trainerWorkouts = wrkRes.data?.listWorkoutsByTrainer || [];
+
+              // Create a map for quick name lookup
+              const workoutNameMap = {};
+              trainerWorkouts.forEach(w => {
+                workoutNameMap[unwrapString(w.workout_id)] = w;
+              });
+
+              console.log(`WorkoutLibrary: Trainer ${tId} found ${trainerProducts.length} products, ${trainerServices.length} services, ${trainerWorkouts.length} workouts`);
+
+              for (const perm of permsByTrainer[tId]) {
+                const resId = unwrapString(perm.resource_id);
+                const pType = unwrapString(perm.product_type);
+                console.log(`WorkoutLibrary: Processing permission: ${pType} | Resource: ${resId}`);
+
+                if (pType === 'workout' || pType === 'workout_product') {
+                  let product = trainerProducts.find(p => unwrapString(p.workout_product_id) === resId);
+                  if (!product) {
+                    console.log('WorkoutLibrary: Product not in trainer list, trying direct fetch for:', resId);
+                    const { data: directProd } = await client.graphql({
+                      query: GET_WORKOUT_PRODUCT,
+                      variables: { trainer_id: tId, workout_product_id: resId }
+                    }).catch((e) => {
+                      console.log('WorkoutLibrary: Direct product fetch error:', e);
+                      return { data: {} };
+                    });
+                    product = directProd?.getWorkoutProduct;
+                  }
+
+                  if (product) {
+                    const packageName = unwrapString(product.name);
+                    const workoutIdsRaw = product.workout_id || [];
+                    const workoutIds = (Array.isArray(workoutIdsRaw) ? workoutIdsRaw : [workoutIdsRaw]).map(id => unwrapString(id)).filter(Boolean);
+                    
+                    console.log(`WorkoutLibrary: Found product "${packageName}" with ${workoutIds.length} workouts`);
+                    
+                    for (const wid of workoutIds) {
+                      const workoutInfo = workoutNameMap[wid];
+                      if (workoutInfo) {
+                        console.log(`WorkoutLibrary: Adding purchased workout: ${workoutInfo.name} (from ${packageName})`);
+                        purchasedItems.push({
+                          workout_id: unwrapString(workoutInfo.workout_id),
+                          purchase_id: resId,
+                          name: unwrapString(workoutInfo.name),
+                          purchased_name: packageName,
+                          is_purchased: true,
+                          created_at: workoutInfo.created_at,
+                          updated_at: workoutInfo.updated_at,
+                        });
+                      } else {
+                        console.warn(`WorkoutLibrary: No name found for workout ID: ${wid} in trainer's list`);
+                        // Fallback: use product name or placeholder if lookup fails
+                        purchasedItems.push({
+                          workout_id: wid,
+                          purchase_id: resId,
+                          name: `Workout (${wid.slice(-4)})`,
+                          purchased_name: packageName,
+                          is_purchased: true,
+                          created_at: product.created_at,
+                          updated_at: product.updated_at,
+                        });
+                      }
+                    }
+                  } else {
+                    console.warn(`WorkoutLibrary: Resource ${resId} not found as product`);
+                  }
+                } else if (pType === 'service') {
+                  let service = trainerServices.find(s => unwrapString(s.service_id) === resId);
+                  if (!service) {
+                    console.log('WorkoutLibrary: Service not in trainer list, trying direct fetch for:', resId);
+                    const { data: directSvc } = await client.graphql({
+                      query: GET_SERVICE,
+                      variables: { trainer_id: tId, service_id: resId }
+                    }).catch((e) => {
+                      console.log('WorkoutLibrary: Direct service fetch error:', e);
+                      return { data: {} };
+                    });
+                    service = directSvc?.getVirtualTrainingService;
+                  }
+
+                  if (service) {
+                    const packageName = unwrapString(service.service_name);
+                    const workoutIds = (Array.isArray(service.workout_ids) ? service.workout_ids : []).map(id => unwrapString(id)).filter(Boolean);
+                    
+                    console.log(`WorkoutLibrary: Found service "${packageName}" with ${workoutIds.length} workouts`);
+                    
+                    for (const wid of workoutIds) {
+                      const workoutInfo = workoutNameMap[wid];
+                      if (workoutInfo) {
+                        console.log(`WorkoutLibrary: Adding purchased workout (svc): ${workoutInfo.name} (from ${packageName})`);
+                        purchasedItems.push({
+                          workout_id: unwrapString(workoutInfo.workout_id),
+                          purchase_id: resId,
+                          name: unwrapString(workoutInfo.name),
+                          purchased_name: packageName,
+                          is_purchased: true,
+                          created_at: workoutInfo.created_at,
+                          updated_at: workoutInfo.updated_at,
+                        });
+                      } else {
+                        console.warn(`WorkoutLibrary: No name found for workout ID: ${wid} in trainer's service`);
+                        purchasedItems.push({
+                          workout_id: wid,
+                          purchase_id: resId,
+                          name: `Workout (${wid.slice(-4)})`,
+                          purchased_name: packageName,
+                          is_purchased: true,
+                          created_at: service.created_at,
+                          updated_at: service.updated_at,
+                        });
+                      }
+                    }
+                  } else {
+                    console.warn(`WorkoutLibrary: Resource ${resId} not found as service`);
+                  }
+                }
+              }
+            } catch (trainerErr) {
+              console.log('WorkoutLibrary: Failed to fetch resources for trainer', tId, trainerErr);
+            }
+          }
+        } catch (err) {
+          console.log('WorkoutLibrary: Failed to fetch permissions', err);
+        }
+
+        const normalizedDirect = (directItems || []).map((row) => ({
+          type: 'workout',
           workout_id: row.workout_id,
+          uniqueId: row.workout_id, // Unique enough for direct
           name: row.name || 'Untitled Workout',
           created_at: row.created_at,
           updated_at: row.updated_at,
+          is_purchased: false,
         }));
-        setWorkouts(normalized);
+
+        // Final assembly of the list with section headers
+        let finalItems = [...normalizedDirect];
+        
+        if (purchasedItems.length > 0) {
+          // Add main "Purchased Workouts" separator
+          finalItems.push({ type: 'header', label: 'Purchased Workouts', id: 'purchased-heading', uniqueId: 'purchased-heading' });
+
+          // Group purchased items by their purchased_name (package name)
+          const grouped = purchasedItems.reduce((acc, item) => {
+            const pkg = item.purchased_name || 'Other Purchases';
+            if (!acc[pkg]) acc[pkg] = [];
+            acc[pkg].push({ 
+              ...item, 
+              type: 'workout',
+              uniqueId: `${item.purchase_id}-${item.workout_id}`
+            });
+            return acc;
+          }, {});
+
+          // Add each package with its sub-header
+          for (const pkgName of Object.keys(grouped)) {
+            finalItems.push({ 
+              type: 'package_header', 
+              label: pkgName, 
+              id: `pkg-${pkgName}`,
+              uniqueId: `pkg-${pkgName}`
+            });
+            finalItems.push(...grouped[pkgName]);
+          }
+        }
+
+        console.log('WorkoutLibrary: Final total list items:', finalItems.length);
+        setWorkouts(finalItems);
       } catch (err) {
         console.log('Fetch workouts failed', err);
         setError(err?.errors?.[0]?.message || 'Failed to load workouts.');
@@ -59,6 +356,13 @@ export default function WorkoutLibrary({ navigation }) {
     },
     [client]
   );
+
+  const onRefresh = useCallback(async () => {
+    if (!customerId) return;
+    setRefreshing(true);
+    await fetchWorkouts(customerId);
+    setRefreshing(false);
+  }, [customerId, fetchWorkouts]);
 
   useEffect(() => {
     let mounted = true;
@@ -86,64 +390,97 @@ export default function WorkoutLibrary({ navigation }) {
   }, [client, fetchWorkouts]);
 
   const ensureItems = useCallback(
-    async (workout_id) => {
-      if (!workout_id || itemsMap[workout_id]) return;
+    async (workout) => {
+      const { workout_id, uniqueId } = workout;
+      if (!workout_id) return [];
+      if (itemsMap[uniqueId]) return itemsMap[uniqueId];
+
       try {
-        setItemsLoading((prev) => ({ ...prev, [workout_id]: true }));
+        setItemsLoading((prev) => ({ ...prev, [uniqueId]: true }));
+        
+        let allItems = [];
         const { data } = await client.graphql({
           query: listWorkoutItemsByWorkout,
           variables: { workout_id, limit: 100 },
         });
-        const rows = data?.listWorkoutItemsByWorkout ?? data?.listWorkoutItems ?? [];
-        const normalized = rows
+        allItems = data?.listWorkoutItemsByWorkout ?? data?.listWorkoutItems ?? [];
+
+        const normalized = allItems
           .map(normalizeWorkoutItem)
           .sort((a, b) => (a.workout_item_index || 0) - (b.workout_item_index || 0));
-        setItemsMap((prev) => ({ ...prev, [workout_id]: normalized }));
+        
+        setItemsMap((prev) => ({ ...prev, [uniqueId]: normalized }));
+        return normalized;
       } catch (err) {
         console.log('Workout items fetch failed', err);
         setError(err?.errors?.[0]?.message || 'Failed to load workout items.');
+        return [];
       } finally {
-        setItemsLoading((prev) => ({ ...prev, [workout_id]: false }));
+        setItemsLoading((prev) => ({ ...prev, [uniqueId]: false }));
       }
     },
     [client, itemsMap]
   );
 
-  const toggleExpand = async (workout_id) => {
-    if (expandedId === workout_id) {
+  const toggleExpand = async (item) => {
+    if (expandedId === item.uniqueId) {
       setExpandedId(null);
       return;
     }
-    setExpandedId(workout_id);
-    await ensureItems(workout_id);
+    setExpandedId(item.uniqueId);
+    await ensureItems(item);
   };
 
   const goToRunner = useCallback(
     async (workout) => {
-      await ensureItems(workout.workout_id);
+      const items = await ensureItems(workout);
       navigation.navigate('WorkoutRunner', {
         customer_id: customerId,
         workoutPlan: {
           workout_id: workout.workout_id,
           name: workout.name,
-          items: itemsMap[workout.workout_id] ?? [],
+          items: items || [],
         },
       });
     },
-    [customerId, navigation, ensureItems, itemsMap]
+    [customerId, navigation, ensureItems]
   );
 
   const renderWorkout = ({ item }) => {
-    const isOpen = expandedId === item.workout_id;
-    const itemList = itemsMap[item.workout_id] || [];
-    const loadingItems = itemsLoading[item.workout_id];
+    if (item.type === 'header') {
+      return (
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionHeaderText}>{item.label}</Text>
+        </View>
+      );
+    }
+    
+    if (item.type === 'package_header') {
+      return (
+        <View style={styles.packageHeader}>
+          <Text style={styles.packageHeaderText}>{item.label}</Text>
+        </View>
+      );
+    }
+
+    const isOpen = expandedId === item.uniqueId;
+    const itemList = itemsMap[item.uniqueId] || [];
+    const loadingItems = itemsLoading[item.uniqueId];
+
     return (
       <View style={styles.card}>
-        <Pressable onPress={() => toggleExpand(item.workout_id)} style={styles.cardHeader}>
-          <View>
+        <Pressable onPress={() => toggleExpand(item)} style={styles.cardHeader}>
+          <View style={{ flex: 1 }}>
             <Text style={styles.workoutName}>{item.name}</Text>
+            {item.is_purchased && (
+              <View style={styles.badgeRow}>
+                <View style={styles.badge}>
+                  <Text style={styles.badgeText}>PURCHASED</Text>
+                </View>
+              </View>
+            )}
             <Text style={styles.workoutMeta}>
-              Created {formatDate(item.created_at)} · Updated {formatDate(item.updated_at)}
+              Created {formatDate(item.created_at)}
             </Text>
           </View>
           <TouchableOpacity style={styles.performButton} onPress={() => goToRunner(item)}>
@@ -158,7 +495,7 @@ export default function WorkoutLibrary({ navigation }) {
               <Text style={styles.empty}>No exercises added yet.</Text>
             ) : (
               itemList.map((entry) => (
-                <View key={`${entry.workout_id}-${entry.workout_item_index}`} style={styles.itemRow}>
+                <View key={`${item.uniqueId}-${entry.workout_item_index}`} style={styles.itemRow}>
                   <Text style={styles.itemTitle}>
                     {entry.workout_item_index}. {entry.exercise_id}
                   </Text>
@@ -189,8 +526,11 @@ export default function WorkoutLibrary({ navigation }) {
       <FlatList
         contentContainerStyle={styles.list}
         data={workouts}
-        keyExtractor={(item) => item.workout_id}
+        keyExtractor={(item) => item.uniqueId}
         renderItem={renderWorkout}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
         ListEmptyComponent={<Text style={styles.empty}>No workouts created yet.</Text>}
       />
     </SafeAreaView>
@@ -201,14 +541,49 @@ async function resolveCustomerId(client) {
   try {
     const current = await getCurrentUser();
     const user_id = current?.userId || current?.username;
-    if (!user_id) return null;
+    if (!user_id) {
+      console.log('resolveCustomerId: No user_id found');
+      return null;
+    }
+
+    // 1. Check if user already has a customer record
     const { data } = await client.graphql({
       query: LIST_CUSTOMERS_BY_USER,
       variables: { user_id },
     });
-    return data?.listCustomers?.items?.[0]?.customer_id || null;
+    
+    const existing = data?.listCustomers?.items?.[0]?.customer_id;
+    if (existing) {
+      console.log('resolveCustomerId: Found existing customer_id:', existing);
+      return existing;
+    }
+
+    // 2. If not, create a new customer record using user_id as customer_id
+    // This maintains consistency with ProfileSetup.js logic
+    console.log('resolveCustomerId: No customer found, creating one for user_id:', user_id);
+    const CREATE_CUSTOMER = /* GraphQL */ `
+      mutation CreateCustomer($input: CreateCustomerInput!) {
+        createCustomer(input: $input) { customer_id }
+      }
+    `;
+
+    const res = await client.graphql({
+      query: CREATE_CUSTOMER,
+      variables: { 
+        input: { 
+          customer_id: user_id, 
+          user_id,
+          preferred_workout_location: null,
+          fitness_focus: null 
+        } 
+      },
+    });
+
+    const resolved = res?.data?.createCustomer?.customer_id || user_id;
+    console.log('resolveCustomerId: Successfully created/resolved customer_id:', resolved);
+    return resolved;
   } catch (error) {
-    console.log('resolveCustomerId error', error);
+    console.log('resolveCustomerId error:', error);
     return null;
   }
 }
@@ -336,5 +711,49 @@ const styles = StyleSheet.create({
     color: '#b91c1c',
     paddingHorizontal: 16,
     paddingTop: 16,
+  },
+  badge: {
+    backgroundColor: '#16a34a',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  badgeText: {
+    color: '#fff',
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  badgeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  purchasedName: {
+    fontSize: 10,
+    color: '#64748b',
+    fontWeight: '500',
+  },
+  sectionHeader: {
+    paddingVertical: 12,
+    marginTop: 16,
+    marginBottom: 8,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  sectionHeaderText: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#0f172a',
+  },
+  packageHeader: {
+    paddingVertical: 8,
+    marginTop: 8,
+    marginBottom: 4,
+  },
+  packageHeaderText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#475569',
   },
 });

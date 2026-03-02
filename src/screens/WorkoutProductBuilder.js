@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View, Text, StyleSheet, TextInput, TouchableOpacity, FlatList, Alert, ScrollView } from 'react-native';
 import { generateClient } from 'aws-amplify/api';
+import { getCurrentUser } from 'aws-amplify/auth';
 import { v4 as uuidv4 } from 'uuid';
 
 const LIST_WORKOUTS_BY_TRAINER = /* GraphQL */ `
@@ -13,11 +14,60 @@ const LIST_WORKOUTS_BY_TRAINER = /* GraphQL */ `
   }
 `;
 
+const LIST_WORKOUTS_BY_CUSTOMER = /* GraphQL */ `
+  query ListWorkoutsByCustomer($customer_id: ID!, $limit: Int) {
+    listWorkoutsByCustomer(customer_id: $customer_id, limit: $limit) {
+      workout_id
+      name
+      created_at
+    }
+  }
+`;
+
+const LIST_CUSTOMERS_BY_USER = /* GraphQL */ `
+  query ListCustomers($user_id: ID!) {
+    listCustomers(filter: { user_id: { eq: $user_id } }, limit: 1) {
+      items { customer_id }
+    }
+  }
+`;
+
 const CREATE_WORKOUT_PRODUCT = /* GraphQL */ `
   mutation CreateWorkoutProduct($input: CreateWorkoutProductInput!) {
     createWorkoutProduct(input: $input) {
       workout_product_id
       trainer_id
+      stripe_product_id
+      stripe_price_id
+    }
+  }
+`;
+
+const CREATE_STRIPE_PRODUCT = /* GraphQL */ `
+  mutation CreateStripeProduct(
+    $trainer_id: ID!, 
+    $name: String!, 
+    $price: Float!, 
+    $description: String, 
+    $product_type: String,
+    $workout_ids: [ID],
+    $difficulty_level: String,
+    $fitness_goal: String
+  ) {
+    createStripeProduct(
+      trainer_id: $trainer_id, 
+      name: $name, 
+      price: $price, 
+      description: $description, 
+      product_type: $product_type,
+      workout_ids: $workout_ids,
+      difficulty_level: $difficulty_level,
+      fitness_goal: $fitness_goal
+    ) {
+      workout_product_id
+      stripe_product_id
+      stripe_price_id
+      error
     }
   }
 `;
@@ -25,6 +75,10 @@ const CREATE_WORKOUT_PRODUCT = /* GraphQL */ `
 export default function WorkoutProductBuilder({ route, navigation }) {
   const client = useMemo(() => generateClient({ authMode: 'userPool' }), []);
   const trainer_id = route?.params?.trainer_id || null;
+
+  useEffect(() => {
+    console.log('WorkoutProductBuilder: Mounted with trainer_id:', trainer_id);
+  }, [trainer_id]);
 
   const [name, setName] = useState('');
   const [intensity, setIntensity] = useState('Moderate');
@@ -36,20 +90,72 @@ export default function WorkoutProductBuilder({ route, navigation }) {
 
   useEffect(() => {
     if (!trainer_id) return;
+    let mounted = true;
     (async () => {
       try {
-        const { data } = await client.graphql({
+        setLoading(true);
+        // 1. Fetch by trainer_id
+        const trainerRes = await client.graphql({
           query: LIST_WORKOUTS_BY_TRAINER,
           variables: { trainer_id, limit: 100 },
-        });
-        const list = data?.listWorkoutsByTrainer;
-        const items = Array.isArray(list) ? list : Array.isArray(list?.items) ? list.items : [];
-        setWorkouts(items);
+        }).catch(() => ({ data: {} }));
+        
+        // 2. Fetch by customer_id (current user)
+        let customerRes = { data: {} };
+        try {
+          const user = await getCurrentUser();
+          const userId = user.userId || user.username;
+
+          // Resolve correct customer_id
+          let resolvedCustomerId = userId;
+          try {
+             const custData = await client.graphql({
+               query: LIST_CUSTOMERS_BY_USER,
+               variables: { user_id: userId }
+             });
+             const found = custData?.data?.listCustomers?.items?.[0]?.customer_id;
+             if (found) resolvedCustomerId = found;
+             console.log('Resolved customer ID for workouts:', resolvedCustomerId);
+          } catch (err) {
+             console.log('Error resolving customer ID:', err);
+          }
+
+          customerRes = await client.graphql({
+            query: LIST_WORKOUTS_BY_CUSTOMER,
+            variables: { customer_id: resolvedCustomerId, limit: 100 },
+          });
+        } catch (e) {
+          console.log('Failed to fetch user workouts:', e);
+        }
+
+        if (mounted) {
+          const trainerList = trainerRes?.data?.listWorkoutsByTrainer?.items || trainerRes?.data?.listWorkoutsByTrainer || [];
+          const customerList = customerRes?.data?.listWorkoutsByCustomer?.items || customerRes?.data?.listWorkoutsByCustomer || [];
+          
+          // Merge and dedup
+          const all = [...trainerList, ...customerList];
+          const unique = [];
+          const seen = new Set();
+          for (const w of all) {
+            if (w?.workout_id && !seen.has(w.workout_id)) {
+              seen.add(w.workout_id);
+              unique.push(w);
+            }
+          }
+          
+          // Sort by creation date (newest first)
+          unique.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+          
+          setWorkouts(unique);
+        }
       } catch (err) {
         console.log('Load workouts for product failed', err);
         Alert.alert('Error', 'Unable to load workouts for this trainer.');
+      } finally {
+        if (mounted) setLoading(false);
       }
     })();
+    return () => { mounted = false; };
   }, [client, trainer_id]);
 
   const toggleWorkout = (workout_id) => {
@@ -85,25 +191,47 @@ export default function WorkoutProductBuilder({ route, navigation }) {
     }
     try {
       setLoading(true);
-      const now = new Date().toISOString();
-      const workout_product_id = uuidv4();
-      await client.graphql({
-        query: CREATE_WORKOUT_PRODUCT,
-        variables: {
-          input: {
-            workout_product_id,
-            trainer_id,
-            name: name.trim(),
-            difficulty_level: intensity,
-            fitness_goal: fitnessGoal || null,
-            price: priceNum,
-            workout_id: pickedIds,
-            created_at: now,
-            updated_at: now,
-          },
-        },
+
+      // 1. Backend handles both Stripe Sync AND DynamoDB record creation
+      console.log('Initiating product sync with variables:', {
+        trainer_id: trainer_id,
+        name: name.trim(),
+        price: priceNum,
+        product_type: 'workout_product',
+        workout_ids: pickedIds
       });
-      Alert.alert('Saved', 'Workout product created.', [
+
+      const stripeRes = await client.graphql({
+        query: CREATE_STRIPE_PRODUCT,
+        variables: {
+          trainer_id: trainer_id,
+          name: name.trim(),
+          price: priceNum,
+          description: `Intensity: ${intensity}, Goal: ${fitnessGoal}`,
+          product_type: 'workout_product',
+          workout_ids: pickedIds,
+          difficulty_level: intensity,
+          fitness_goal: fitnessGoal || null
+        }
+      });
+
+      console.log('Full Stripe Sync Response:', JSON.stringify(stripeRes, null, 2));
+
+      const stripeData = stripeRes.data?.createStripeProduct;
+      
+      if (!stripeData) {
+        throw new Error('No data returned from createStripeProduct mutation.');
+      }
+
+      if (stripeData.error) {
+        throw new Error(`Sync Error: ${stripeData.error}`);
+      }
+
+      if (!stripeData.stripe_product_id) {
+        throw new Error(`Incomplete sync: Product created but Stripe ID is missing. Data: ${JSON.stringify(stripeData)}`);
+      }
+
+      Alert.alert('Saved', 'Workout product created and synced successfully.', [
         { text: 'OK', onPress: () => navigation.goBack() },
       ]);
     } catch (err) {

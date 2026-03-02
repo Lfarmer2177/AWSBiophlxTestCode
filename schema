@@ -1,0 +1,508 @@
+# ---------- Inputs ----------
+input CreateCustomerInput {
+	customer_id: ID!
+	user_id: ID!
+	preferred_workout_location: String
+	fitness_focus: String
+}
+
+input CreateSessionInput {
+	session_id: ID!
+	customer_id: ID!
+	workout_id: ID
+	workout_date: AWSDateTime
+}
+
+input CreateSessionItemInput {
+	session_id: ID!
+	session_item_index: Int!
+	workout_id: ID
+	workout_index: Int
+	exercise_id: ID!
+	muscle_focus: String
+}
+
+input CreateSessionItemRepInput {
+	session_id: ID!
+	session_item_index: Int!
+	session_item_set_index: Int!
+	session_item_rep_index: Int!
+	tut: Float
+	velocity: Int
+	momentum: Int
+	score: Int
+	rom: Int
+}
+
+input CreateSessionItemSetInput {
+	session_id: ID!
+	session_item_index: Int!
+	session_item_set_index: Int!
+	weight_lifted: Float
+}
+
+input CreateTrainerInput {
+	trainer_id: ID!
+	user_id: ID!
+	training_focus: String
+	total_clients: Int
+	total_revenue: Float
+	workouts_sold: Int
+	services_sold: Int
+	workouts_created: Int
+	created_at: AWSDateTime
+	updated_at: AWSDateTime
+	stripe_account_id: String
+	stripe_onboarded: Boolean
+	stripe_charges_enabled: Boolean
+	stripe_payouts_enabled: Boolean
+}
+
+input CreateUserInput {
+	user_id: ID!
+	email: AWSEmail
+	first_name: String
+	last_name: String
+	gender: String
+	city: String
+	state: String
+	age: Int
+	current_weight: Float
+	height_inches: Float
+	fitness_goal: String
+	workout_location: String
+	bio: String
+	role: String
+}
+
+input CreateVirtualTrainingServiceInput {
+	service_id: ID!
+	trainer_id: ID!
+	service_name: String!
+	description: String
+	duration_weeks: Int
+	price: Float
+	workout_ids: [ID!]
+	workout_products: [ID!]
+	stripe_product_id: String
+	stripe_price_id: String
+	created_at: AWSDateTime
+	updated_at: AWSDateTime
+}
+
+input CreateWorkoutInput {
+	workout_id: ID!
+	customer_id: ID!
+	trainer_id: ID
+	name: String!
+	created_at: AWSDateTime
+	updated_at: AWSDateTime
+}
+
+input CreateWorkoutItemInput {
+	workout_id: ID!
+	workout_item_index: Int!
+	exercise_id: ID!
+	muscle_focus: String
+	target_sets: Int
+	target_reps: Int
+	target_tot: Int
+	target_tut: Float
+	target_velocity: Float
+	target_weight: Float
+	created_at: AWSDateTime
+	updated_at: AWSDateTime
+}
+
+input CreateWorkoutProductInput {
+	workout_product_id: ID!
+	trainer_id: ID!
+	name: String!
+	difficulty_level: String
+	fitness_goal: String
+	price: Float
+	workout_id: [ID!]!
+	stripe_product_id: String
+	stripe_price_id: String
+	created_at: AWSDateTime
+	updated_at: AWSDateTime
+}
+
+# ---------- Types ----------
+type Customer {
+	customer_id: ID!
+	user_id: ID!
+	preferred_workout_location: String
+	fitness_focus: String
+	created_at: AWSDateTime
+	updated_at: AWSDateTime
+}
+
+type CustomerConnection {
+	items: [Customer!]!
+	nextToken: String
+}
+
+input CustomerFilterInput {
+	user_id: IDComparisonInput
+}
+
+type Exercise @aws_cognito_user_pools
+@aws_api_key {
+	exercise_id: ID!
+	name: String
+	category: String
+	muscle_group: [String]
+	equipment_required: [String]
+	instructions: [String]
+	exercise_image: AWSURL
+	exercise_profile_id: ID
+	created_at: AWSDateTime
+	updated_at: AWSDateTime
+}
+
+type ExerciseConnection @aws_cognito_user_pools
+@aws_api_key {
+	items: [Exercise]
+	nextToken: String
+}
+
+type ExerciseProfile {
+	exercise_profile_id: ID!
+	version: String
+	exercise_config_blob: AWSJSON
+	created_at: AWSDateTime
+	updated_at: AWSDateTime
+}
+
+input IDComparisonInput {
+	eq: ID
+}
+
+type Session {
+	session_id: ID!
+	customer_id: ID!
+	workout_id: ID
+	workout_date: AWSDateTime!
+	created_at: AWSDateTime
+	updated_at: AWSDateTime
+}
+
+type SessionItem {
+	session_id: ID!
+	session_item_index: Int!
+	workout_id: ID
+	workout_index: Int
+	exercise_id: ID!
+	muscle_focus: String
+	created_at: AWSDateTime
+	updated_at: AWSDateTime
+}
+
+type SessionItemRep {
+	session_id: ID!
+	session_item_index: Int!
+	session_item_set_index: Int!
+	session_item_rep_index: Int!
+	tut: Float
+	velocity: Int
+	momentum: Int
+	score: Int
+	rom: Int
+	created_at: AWSDateTime
+	updated_at: AWSDateTime
+	rep_key: String
+	session_item_key: String
+}
+
+type SessionItemRepConnection {
+	items: [SessionItemRep!]!
+	nextToken: String
+}
+
+type SessionItemSet {
+	session_id: ID!
+	session_item_index: Int!
+	session_item_set_index: Int!
+	weight_lifted: Float
+	created_at: AWSDateTime
+	updated_at: AWSDateTime
+}
+
+type StripeResponse {
+	url: String
+	onboarding_url: String
+	stripe_account_id: String
+	error: String
+}
+
+type Trainer {
+	trainer_id: ID!
+	user_id: ID!
+	training_focus: String
+	total_clients: Int
+	total_revenue: Float
+	workouts_sold: Int
+	services_sold: Int
+	workouts_created: Int
+	created_at: AWSDateTime
+	updated_at: AWSDateTime
+	stripe_account_id: String
+	stripe_onboarded: Boolean
+	stripe_charges_enabled: Boolean
+	stripe_payouts_enabled: Boolean
+}
+
+type TrainerConnection {
+	items: [Trainer!]!
+	nextToken: String
+}
+
+input TrainerFilterInput {
+	user_id: IDComparisonInput
+	trainer_id: IDComparisonInput
+	training_focus: String
+	total_clients: Int
+	total_revenue: Float
+	workouts_sold: Int
+	services_sold: Int
+	workouts_created: Int
+}
+
+input UpdateCustomerInput {
+	customer_id: ID!
+	user_id: ID
+	preferred_workout_location: String
+	fitness_focus: String
+}
+
+input UpdateTrainerInput {
+	trainer_id: ID!
+	user_id: ID
+	training_focus: String
+	total_clients: Int
+	total_revenue: Float
+	workouts_sold: Int
+	services_sold: Int
+	workouts_created: Int
+	created_at: AWSDateTime
+	updated_at: AWSDateTime
+	stripe_account_id: String
+	stripe_onboarded: Boolean
+	stripe_charges_enabled: Boolean
+	stripe_payouts_enabled: Boolean
+}
+
+input UpdateUserInput {
+	user_id: ID!
+	first_name: String
+	last_name: String
+	gender: String
+	city: String
+	state: String
+	age: Int
+	current_weight: Float
+	height_inches: Float
+	fitness_goal: String
+	workout_location: String
+	bio: String
+	role: String
+}
+
+input UpdateVirtualTrainingServiceInput {
+	service_id: ID!
+	trainer_id: ID
+	service_name: String
+	description: String
+	duration_weeks: Int
+	price: Float
+	workout_ids: [ID!]
+	workout_products: [ID!]
+	created_at: AWSDateTime
+	updated_at: AWSDateTime
+}
+
+type Permission {
+	user_id: ID!
+	resource_id: ID!
+	product_type: String
+	trainer_id: ID
+	purchased_at: AWSDateTime
+	status: String
+}
+
+type PermissionConnection {
+	items: [Permission!]!
+	nextToken: String
+}
+
+type User {
+	user_id: ID!
+	email: AWSEmail!
+	first_name: String
+	last_name: String
+	role: String
+	bio: String
+	gender: String
+	city: String
+	state: String
+	age: Int
+	profile_image_url: AWSURL
+	current_weight: Float
+	height_inches: Float
+	fitness_goal: String
+	workout_location: String
+	created_at: AWSDateTime
+	updated_at: AWSDateTime
+}
+
+type VirtualTrainingService {
+	service_id: ID!
+	trainer_id: ID!
+	service_name: String!
+	description: String
+	duration_weeks: Int
+	price: Float
+	workout_ids: [ID!]
+	workout_products: [ID!]
+	stripe_product_id: String
+	stripe_price_id: String
+	product_type: String
+	created_at: AWSDateTime
+	updated_at: AWSDateTime
+}
+
+type VirtualTrainingServiceConnection {
+	items: [VirtualTrainingService!]!
+	nextToken: String
+}
+
+type Workout {
+	workout_id: ID!
+	customer_id: ID!
+	trainer_id: ID
+	name: String!
+	created_at: AWSDateTime
+	updated_at: AWSDateTime
+}
+
+type WorkoutItem {
+	workout_id: ID!
+	workout_item_index: Int!
+	exercise_id: ID!
+	muscle_focus: String
+	target_sets: Int
+	target_reps: Int
+	target_tot: Int
+	target_tut: Float
+	target_velocity: Float
+	target_weight: Float
+	created_at: AWSDateTime
+	updated_at: AWSDateTime
+}
+
+type WorkoutProduct {
+	workout_product_id: ID!
+	trainer_id: ID!
+	name: String!
+	difficulty_level: String
+	fitness_goal: String
+	price: Float
+	workout_id: [ID!]!
+	stripe_product_id: String
+	stripe_price_id: String
+	created_at: AWSDateTime
+	updated_at: AWSDateTime
+}
+
+# ---------- Mutations ----------
+type Mutation {
+	createUser(input: CreateUserInput!): User
+	updateUser(input: UpdateUserInput!): User
+	deleteUser(user_id: ID!): ID
+	createCustomer(input: CreateCustomerInput!): Customer
+	updateCustomer(input: UpdateCustomerInput!): Customer
+	createTrainer(input: CreateTrainerInput!): Trainer
+	updateTrainer(input: UpdateTrainerInput!): Trainer
+	createWorkout(input: CreateWorkoutInput!): Workout
+	createWorkoutItem(input: CreateWorkoutItemInput!): WorkoutItem
+	createSession(input: CreateSessionInput!): Session
+	createSessionItem(input: CreateSessionItemInput!): SessionItem
+	createSessionItemSet(input: CreateSessionItemSetInput!): SessionItemSet
+	createSessionItemRep(input: CreateSessionItemRepInput!): SessionItemRep
+	createWorkoutProduct(input: CreateWorkoutProductInput!): WorkoutProduct
+	createVirtualTrainingService(input: CreateVirtualTrainingServiceInput!): VirtualTrainingService
+	updateVirtualTrainingService(input: UpdateVirtualTrainingServiceInput!): VirtualTrainingService
+	deleteVirtualTrainingService(service_id: ID!): ID
+	# Stripe Onboarding
+	setupStripeOnboarding(trainer_id: ID!, email: String!): StripeResponse
+	# Stripe Checkout
+	createStripeCheckout(
+		trainer_id: ID!,
+		trainer_user_id: ID!,
+		user_id: ID!,
+		price: Float!,
+		product_name: String!,
+		product_id: ID!,
+		product_type: String!
+	): StripeResponse
+	# Stripe Product Sync
+	createStripeProduct(
+		trainer_id: ID!,
+		name: String!,
+		price: Float!,
+		description: String,
+		product_type: String,
+		workout_ids: [ID],
+		workout_products: [ID],
+		difficulty_level: String,
+		fitness_goal: String,
+		duration_weeks: Int
+	): StripeProductResponse
+}
+
+type StripeProductResponse {
+	workout_product_id: String
+	service_id: String
+	stripe_product_id: String
+	stripe_price_id: String
+	error: String
+}
+
+# ---------- Queries ----------
+type Query {
+	getUser(user_id: ID!): User
+	listUsers(limit: Int, nextToken: String): [User!]!
+	getCustomer(customer_id: ID!): Customer
+	listCustomers(filter: CustomerFilterInput, limit: Int, nextToken: String): CustomerConnection
+	getTrainer(trainer_id: ID!): Trainer
+	listTrainers(filter: TrainerFilterInput, limit: Int, nextToken: String): TrainerConnection
+	getWorkout(workout_id: ID!): Workout
+	listWorkoutsByCustomer(customer_id: ID!, limit: Int, nextToken: String): [Workout!]!
+	listWorkoutItems(workout_id: ID!, limit: Int, nextToken: String): [WorkoutItem!]!
+	getSession(session_id: ID!): Session
+	listSessionsByCustomer(customer_id: ID!, limit: Int, nextToken: String): [Session!]!
+	listSessionItemsBySession(session_id: ID!, limit: Int, nextToken: String): [SessionItem!]!
+	getSessionItemSet(session_id: ID!, session_item_index: Int!): SessionItemSet
+	listSessionItemSets(
+		session_id: ID!,
+		session_item_index: Int!,
+		limit: Int,
+		nextToken: String
+	): [SessionItemSet!]!
+	listSessionItemReps(session_id: ID!, limit: Int, nextToken: String): SessionItemRepConnection
+	getExercise(exercise_id: ID!): Exercise
+		@aws_cognito_user_pools
+@aws_api_key
+	listExercises(limit: Int, nextToken: String): ExerciseConnection
+		@aws_cognito_user_pools
+@aws_api_key
+	listWorkoutsByTrainer(trainer_id: ID!, limit: Int, nextToken: String): [Workout!]!
+	listWorkoutProductsByTrainer(trainer_id: ID!, limit: Int, nextToken: String): [WorkoutProduct!]!
+	getWorkoutProduct(trainer_id: ID!, workout_product_id: ID!): WorkoutProduct
+	getVirtualTrainingService(trainer_id: ID!, service_id: ID!): VirtualTrainingService
+	listVirtualTrainingServicesByTrainer(trainer_id: ID!, limit: Int, nextToken: String): VirtualTrainingServiceConnection
+	# Permissions
+	getPermission(user_id: ID!, resource_id: ID!): Permission
+	listPermissionsByUser(user_id: ID!, limit: Int, nextToken: String): PermissionConnection
+}

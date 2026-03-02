@@ -69,3 +69,17 @@ export const createSessionItemRep = /* GraphQL */ `
     }
   }
 `;
+
+export const updateTrainer = /* GraphQL */ `
+  mutation UpdateTrainer($input: UpdateTrainerInput!) {
+    updateTrainer(input: $input) {
+      trainer_id
+      user_id
+      workouts_created
+      total_clients
+      total_revenue
+      workouts_sold
+      services_sold
+    }
+  }
+`;

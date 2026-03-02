@@ -13,9 +13,20 @@ import {
   View,
 } from 'react-native';
 import { generateClient } from 'aws-amplify/api';
+import { getCurrentUser } from 'aws-amplify/auth';
 import { v4 as uuidv4 } from 'uuid';
 import { listExercises } from '../graphql/queries';
-import { createWorkout, createWorkoutItem } from '../graphql/mutations';
+import { createWorkout, createWorkoutItem, updateTrainer } from '../graphql/mutations';
+
+const GET_TRAINER = /* GraphQL */ `
+  query GetTrainer($trainer_id: ID!) {
+    getTrainer(trainer_id: $trainer_id) {
+      trainer_id
+      user_id
+      workouts_created
+    }
+  }
+`;
 
 const LIST_TRAINERS_BY_USER = /* GraphQL */ `
   query ListTrainers($user_id: ID!) {
@@ -95,7 +106,25 @@ export default function CreateWorkout({ route, navigation }) {
   };
 
   const saveWorkout = async () => {
-    if (!customer_id) {
+    // If we're a trainer creating a generic workout (no customer_id), 
+    // we use a placeholder customer_id or allow it to be null if schema permits.
+    // Based on the log "Fetch sessions failed", it seems this screen might be 
+    // used in contexts where customer_id is expected but not provided.
+    
+    let effectiveCustomerId = customer_id;
+    
+    if (!effectiveCustomerId) {
+      console.log('CreateWorkout: No customer_id provided. Checking if we can use trainer as customer.');
+      try {
+        const user = await getCurrentUser();
+        effectiveCustomerId = user.userId || user.username;
+        console.log('CreateWorkout: Using user ID as customer_id:', effectiveCustomerId);
+      } catch (err) {
+        console.log('CreateWorkout: Failed to get current user for customer_id', err);
+      }
+    }
+
+    if (!effectiveCustomerId) {
       Alert.alert('Missing info', 'Unable to resolve customer profile.');
       return;
     }
@@ -106,7 +135,7 @@ export default function CreateWorkout({ route, navigation }) {
     try {
       setSaving(true);
       const now = new Date().toISOString();
-      const workout_id = uuidv4();
+      const workout_id = `${uuidv4()}-${Date.now()}`;
       const name = workoutName.trim() || `Workout ${new Date().toLocaleDateString()}`;
       let trainer_id = trainerIdFromRoute || null;
       if (!trainer_id) {
@@ -125,7 +154,16 @@ export default function CreateWorkout({ route, navigation }) {
 
       await client.graphql({
         query: createWorkout,
-        variables: { input: { workout_id, customer_id, trainer_id: trainer_id || null, name, created_at: now, updated_at: now } },
+        variables: { 
+          input: { 
+            workout_id, 
+            customer_id: effectiveCustomerId, 
+            trainer_id: trainer_id || null, 
+            name, 
+            created_at: now, 
+            updated_at: now 
+          } 
+        },
       });
 
       const mutations = items.map((entry, index) => {
@@ -155,6 +193,34 @@ export default function CreateWorkout({ route, navigation }) {
       });
 
       await Promise.all(mutations);
+
+      // Update trainer workouts_created count
+      if (trainer_id) {
+        try {
+          const { data: trainerData } = await client.graphql({
+            query: GET_TRAINER,
+            variables: { trainer_id },
+          });
+          const currentTrainer = trainerData?.getTrainer;
+          if (currentTrainer) {
+            const currentCount = currentTrainer.workouts_created || 0;
+            await client.graphql({
+              query: updateTrainer,
+              variables: {
+                input: {
+                  trainer_id,
+                  user_id: currentTrainer.user_id,
+                  workouts_created: currentCount + 1,
+                },
+              },
+            });
+            console.log('Trainer workouts_created incremented to:', currentCount + 1);
+          }
+        } catch (updateErr) {
+          console.log('Failed to increment trainer workouts_created:', updateErr);
+        }
+      }
+
       Alert.alert('Workout saved', 'Your workout has been created.', [
         { text: 'OK', onPress: () => navigation.goBack() },
       ]);

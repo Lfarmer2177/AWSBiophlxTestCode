@@ -127,6 +127,22 @@ export const listSessionItemRepsQuery = /* GraphQL */ `
   }
 `;
 
+export const listPermissionsByUser = /* GraphQL */ `
+  query ListPermissionsByUser($user_id: ID!, $limit: Int, $nextToken: String) {
+    listPermissionsByUser(user_id: $user_id, limit: $limit, nextToken: $nextToken) {
+      items {
+        user_id
+        resource_id
+        product_type
+        trainer_id
+        purchased_at
+        status
+      }
+      nextToken
+    }
+  }
+`;
+
 export const getUser = /* GraphQL */ `
   query GetUser($user_id: ID!) {
     getUser(user_id: $user_id) {
