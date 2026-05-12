@@ -2,7 +2,12 @@
   "expo": {
     "name": "biophlxAppTestAWS",
     "slug": "biophlxAppTestAWS",
-    "version": "1.0.0",
+    "version": "2.0.0",
+     "plugins": [
+      [
+        "react-native-ble-plx"
+      ]
+    ],
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
@@ -13,17 +18,27 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.londof.biophlxAppTestAWS",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "package": "com.londof.biophlxAppTestAWS"
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "d0a8b706-94fd-4ccf-b08c-e4de8bdc6e5f"
+      }
     }
   }
 }
