@@ -7,6 +7,13 @@
     "plugins": [
       [
         "react-native-ble-plx"
+      ],
+      "expo-mail-composer",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "This app accesses your photo library to allow trainers to upload profile pictures and workout demonstrations."
+        }
       ]
     ],
     "orientation": "portrait",

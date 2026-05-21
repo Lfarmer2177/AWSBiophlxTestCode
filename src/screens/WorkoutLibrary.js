@@ -8,12 +8,13 @@ import {
   Text,
   TouchableOpacity,
   View,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { generateClient } from 'aws-amplify/api';
 import { getCurrentUser } from 'aws-amplify/auth';
 import { listWorkoutsByCustomer, listWorkoutItemsByWorkout, listPermissionsByUser } from '../graphql/queries';
-
+import Colors from '../Theme/Colors';
 const LIST_PRODUCTS_BY_TRAINER = /* GraphQL */ `
   query ListWorkoutProductsByTrainer($trainer_id: ID!, $limit: Int) {
     listWorkoutProductsByTrainer(trainer_id: $trainer_id, limit: $limit) {
@@ -97,7 +98,8 @@ const GET_SERVICE = /* GraphQL */ `
     }
   }
 `;
-export default function WorkoutLibrary({ navigation }) {
+export default function WorkoutLibrary({ route,navigation }) {
+  const {clientData}=route?.params || {};
   const client = useMemo(() => generateClient({ authMode: 'userPool' }), []);
   const [customerId, setCustomerId] = useState(null);
   const [workouts, setWorkouts] = useState([]);
@@ -107,6 +109,31 @@ export default function WorkoutLibrary({ navigation }) {
   const [itemsMap, setItemsMap] = useState({});
   const [itemsLoading, setItemsLoading] = useState({});
   const [refreshing, setRefreshing] = useState(false);
+  const [myTrainerId, setMyTrainerId] = useState(null);
+
+  const CREATE_WORKOUT = /* GraphQL */ `
+    mutation CreateWorkout($input: CreateWorkoutInput!) {
+      createWorkout(input: $input) {
+        workout_id
+      }
+    }
+  `;
+
+  const CREATE_WORKOUT_ITEM = /* GraphQL */ `
+    mutation CreateWorkoutItem($input: CreateWorkoutItemInput!) {
+      createWorkoutItem(input: $input) {
+        workout_item_index
+      }
+    }
+  `;
+
+  const GET_TRAINER = /* GraphQL */ `
+    query GetTrainer($user_id: ID!) {
+      listTrainers(filter: { user_id: { eq: $user_id } }, limit: 500) {
+        items { trainer_id user_id }
+      }
+    }
+  `;
 
   const unwrapString = (val) => {
     if (val?.S) return val.S;
@@ -137,6 +164,17 @@ export default function WorkoutLibrary({ navigation }) {
         
         // 2. Fetch permissions for purchased items
         let purchasedItems = [];
+        
+        // 3. Get Trainer ID if not set
+        if (!myTrainerId) {
+          const tRes = await client.graphql({
+            query: GET_TRAINER,
+            variables: { user_id }
+          });
+          const allTrainers = tRes.data.listTrainers.items;
+          // Reverted to original logic
+          setMyTrainerId(allTrainers[0]?.trainer_id);
+        }
         try {
           const { data: permData } = await client.graphql({
             query: listPermissionsByUser,
@@ -283,7 +321,7 @@ export default function WorkoutLibrary({ navigation }) {
                         purchasedItems.push({
                           workout_id: wid,
                           purchase_id: resId,
-                          name: `Workout (${wid.slice(-4)})`,
+                          name: `Workout`,
                           purchased_name: packageName,
                           is_purchased: true,
                           created_at: service.created_at,
@@ -345,7 +383,7 @@ export default function WorkoutLibrary({ navigation }) {
           }
         }
 
-        console.log('WorkoutLibrary: Final total list items:', finalItems.length);
+        console.log('WorkoutLibrary: Final total list items:', finalItems);
         setWorkouts(finalItems);
       } catch (err) {
         console.log('Fetch workouts failed', err);
@@ -354,8 +392,76 @@ export default function WorkoutLibrary({ navigation }) {
         setLoading(false);
       }
     },
-    [client]
+    [client, myTrainerId]
   );
+
+  const assignWorkoutToClient = async (template) => {
+    try {
+      if (!clientData?.id) {
+        Alert.alert("Error", "No client selected.");
+        return;
+      }
+      setLoading(true);
+
+      const newWorkoutId = Math.random().toString(36).substring(7);
+      const originalWorkoutId = template.workout_id;
+
+      // 1. Create the new workout
+      await client.graphql({
+        query: CREATE_WORKOUT,
+        variables: {
+          input: {
+            workout_id: newWorkoutId,
+            customer_id: clientData.id,
+            trainer_id: myTrainerId,
+            name: `${template.name} (Assigned)`,
+          }
+        }
+      });
+
+      // 2. Fetch original items to duplicate them
+      const itemsRes = await client.graphql({
+        query: listWorkoutItemsByWorkout,
+        variables: { workout_id: originalWorkoutId }
+      });
+      const rawData = itemsRes.data;
+      let originalItems = rawData?.listWorkoutItemsByWorkout ?? rawData?.listWorkoutItems ?? [];
+      
+      // Handle both paginated (connection) and direct array responses
+      if (originalItems?.items) {
+        originalItems = originalItems.items;
+      } else if (!Array.isArray(originalItems)) {
+        originalItems = [];
+      }
+
+      // 3. Duplicate items into the new workout
+      for (const item of originalItems) {
+        await client.graphql({
+          query: CREATE_WORKOUT_ITEM,
+          variables: {
+            input: {
+              workout_id: newWorkoutId,
+              workout_item_index: item.workout_item_index,
+              exercise_id: item.exercise_id,
+              target_sets: item.target_sets,
+              target_reps: item.target_reps,
+              muscle_focus: item.muscle_focus,
+              target_tut: item.target_tut,
+              target_velocity: item.target_velocity,
+              target_weight: item.target_weight,
+            }
+          }
+        });
+      }
+
+      Alert.alert("Success", `Workout sent to ${clientData.Demographic?.name || 'client'}!`);
+    } catch (err) {
+      console.log("Assign workout failed", err);
+      Alert.alert("Error", "Failed to send workout to client.");
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const onRefresh = useCallback(async () => {
     if (!customerId) return;
@@ -483,9 +589,21 @@ export default function WorkoutLibrary({ navigation }) {
               Created {formatDate(item.created_at)}
             </Text>
           </View>
-          <TouchableOpacity style={styles.performButton} onPress={() => goToRunner(item)}>
-            <Text style={styles.performText}>Perform</Text>
-          </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            {clientData && (
+              <TouchableOpacity 
+                style={[styles.performButton, { backgroundColor: Colors.APP_BLUE, marginRight: 8 }]} 
+                onPress={() => assignWorkoutToClient(item)}
+              >
+                <Text style={styles.performText}>Send to Client</Text>
+              </TouchableOpacity>
+            )}
+            {!clientData && (
+              <TouchableOpacity style={styles.performButton} onPress={() => goToRunner(item)}>
+                <Text style={styles.performText}>Perform</Text>
+              </TouchableOpacity>
+            )}
+          </View>
         </Pressable>
         {isOpen && (
           <View style={styles.itemsSection}>

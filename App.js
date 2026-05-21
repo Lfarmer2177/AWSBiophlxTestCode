@@ -21,6 +21,12 @@ Amplify.configure({
     },
   },
   API: awsconfig.API,
+  Storage: {
+    S3: {
+      bucket: 'biophlx-profile-pictures',
+      region: 'us-east-2',
+    }
+  }
 });
 // Quick visibility to ensure we are using the expected pool/client
 console.log('Auth config', {
@@ -44,12 +50,16 @@ import TrainerDirectory from './src/screens/TrainerDirectory';
 import TrainerProfile from './src/screens/TrainerProfile';
 import MonetizationSetup from './src/screens/MonetizationSetup';
 import VirtualTrainingServiceBuilder from './src/screens/VirtualTrainingServiceBuilder';
+import ClientListScreen from './src/screens/ClientListScreen';
+
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 const Stack = createNativeStackNavigator();
 
 export default function App() {
   return (
-    <NavigationContainer>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerBackTitle: 'Back' }} initialRouteName="Auth">
         <Stack.Screen name="Auth" component={AuthGate} options={{ title: 'Sign In' }} />
         <Stack.Screen name="ProfileSetup" component={ProfileSetup} options={{ title: 'Complete Profile' }} />
@@ -65,6 +75,7 @@ export default function App() {
         <Stack.Screen name="TrainerDirectory" component={TrainerDirectory} options={{ title: 'Trainers' }} />
         <Stack.Screen name="TrainerProfile" component={TrainerProfile} options={{ title: 'Trainer Profile' }} />
         <Stack.Screen name="MonetizationSetup" component={MonetizationSetup} options={{ title: 'Monetization Setup' }} />
+        <Stack.Screen name='ClientListScreen' component={ClientListScreen} options={{ title: 'Client List' }} />
         <Stack.Screen
           name="VirtualTrainingServiceBuilder"
           component={VirtualTrainingServiceBuilder}
@@ -72,5 +83,6 @@ export default function App() {
         />
       </Stack.Navigator>
     </NavigationContainer>
+    </GestureHandlerRootView>
   );
 }

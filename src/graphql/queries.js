@@ -146,7 +146,59 @@ export const listPermissionsByUser = /* GraphQL */ `
 export const getUser = /* GraphQL */ `
   query GetUser($user_id: ID!) {
     getUser(user_id: $user_id) {
-      user_id email first_name last_name city state fitness_goal workout_location
+      user_id email first_name last_name city state age profile_image_url fitness_goal workout_location
+    }
+  }
+`;
+
+export const listPermissionsByTrainer = /* GraphQL */ `
+  query ListPermissionsByTrainer($trainer_id: ID!, $limit: Int, $nextToken: String) {
+    listPermissionsByTrainer(trainer_id: $trainer_id, limit: $limit, nextToken: $nextToken) {
+      items {
+        user_id
+        resource_id
+        product_type
+        trainer_id
+        purchased_at
+        status
+      }
+      nextToken
+    }
+  }
+`;
+
+export const listSessionsByCustomer = /* GraphQL */ `
+  query ListSessionsByCustomer($customer_id: ID!, $limit: Int, $nextToken: String) {
+    listSessionsByCustomer(customer_id: $customer_id, limit: $limit, nextToken: $nextToken) {
+      session_id
+      workout_id
+      workout_date
+      created_at
+      updated_at
+    }
+  }
+`;
+
+export const listTrainers = /* GraphQL */ `
+  query ListTrainers($filter: TrainerFilterInput, $limit: Int, $nextToken: String) {
+    listTrainers(filter: $filter, limit: $limit, nextToken: $nextToken) {
+      items {
+        trainer_id
+        user_id
+      }
+      nextToken
+    }
+  }
+`;
+
+export const getVirtualTrainingService = /* GraphQL */ `
+  query GetVirtualTrainingService($service_id: ID!) {
+    getVirtualTrainingService(service_id: $service_id) {
+      service_id
+      trainer_id
+      service_name
+      duration_weeks
+      workout_ids
     }
   }
 `;

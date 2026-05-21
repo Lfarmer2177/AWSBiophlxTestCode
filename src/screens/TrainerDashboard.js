@@ -194,6 +194,17 @@ export default function TrainerDashboard({ route, navigation }) {
           </View>
         </View>
       ) : null}
+
+        {!loading && <TouchableOpacity
+              style={styles.primaryButton}
+              onPress={() => {
+                if (trainer?.trainer_id) {
+                  navigation.navigate('ClientListScreen', { trainer_id: trainer.trainer_id });
+                }
+              }}
+            >
+              <Text style={styles.primaryButtonText}>Client List</Text>
+            </TouchableOpacity>}
     </ScrollView>
   );
 }

@@ -7,8 +7,14 @@ import {
   Text,
   TouchableOpacity,
   View,
+  Image,
+  Alert,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
+import DirectMessageBottomSheet from '../Components/BottomSheet/DirectMessageBottomSheet';
+import Colors from '../Theme/Colors';
 import { generateClient } from 'aws-amplify/api';
 import { getCurrentUser } from 'aws-amplify/auth';
 import {
@@ -120,7 +126,8 @@ const LIST_CUSTOMERS_BY_USER = /* GraphQL */ `
   }
 `;
 
-export default function SessionsDashboard() {
+export default function SessionsDashboard({ route, navigation }) {
+  const { fromClientList, clientData } = route.params || {};
   const client = useMemo(() => generateClient({ authMode: 'userPool' }), []);
   const [customerId, setCustomerId] = useState(null);
   const [sessions, setSessions] = useState([]);
@@ -141,6 +148,33 @@ export default function SessionsDashboard() {
   const [totalMomentumData, setTotalMomentumData] = useState(0);
   const [sessionMomentumMap, setSessionMomentumMap] = useState({});
   const [momentumByDate, setMomentumByDate] = useState({});
+  const [isMessageSheetVisible, setIsMessageSheetVisible] = useState(false);
+  const [profileImage, setProfileImage] = useState('https://via.placeholder.com/80');
+
+  useEffect(() => {
+    if (clientData?.Demographic?.profile_image) {
+      setProfileImage(clientData.Demographic.profile_image);
+    }
+  }, [clientData]);
+
+  const pickImage = async () => {
+    const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission Denied', 'Sorry, we need camera roll permissions to make this work!');
+      return;
+    }
+
+    let result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 1,
+    });
+
+    if (!result.canceled) {
+      setProfileImage(result.assets[0].uri);
+    }
+  };
   const asList = useCallback((value) => {
     if (Array.isArray(value)) return value;
     if (value && Array.isArray(value.items)) return value.items;
@@ -201,6 +235,15 @@ export default function SessionsDashboard() {
   useEffect(() => {
     (async () => {
       try {
+        setLoading(true);
+        // If coming from Client List, we use the passed clientData.id
+        if (fromClientList && clientData?.id) {
+          setCustomerId(clientData.id);
+          await fetchSessions(clientData.id);
+          return;
+        }
+
+        // Fallback: Current user logic
         const current = await getCurrentUser();
         const user_id = current?.userId || current?.username;
         if (!user_id) {
@@ -228,7 +271,7 @@ export default function SessionsDashboard() {
         setLoading(false);
       }
     })();
-  }, [fetchSessions, client]);
+  }, [fetchSessions, client, fromClientList, clientData]);
 
   const ensureSessionDetails = useCallback(
     async (session_id) => {
@@ -839,7 +882,7 @@ export default function SessionsDashboard() {
   };
 
   return (
-    <SafeAreaView style={styles.safe}>
+    <View style={styles.safe}>
       <ScrollView contentContainerStyle={styles.container}>
         <Text style={styles.title}>Session History</Text>
         <View style={styles.mapCard}>
@@ -959,7 +1002,7 @@ export default function SessionsDashboard() {
           : sessions
         ).map(renderSession)}
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -976,7 +1019,94 @@ const formatDate = (value) => {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: '#f8fafc',
+    backgroundColor: '#fff',
+  },
+  topDesignContainer: {
+    alignItems: 'center',
+    marginVertical: 20,
+    paddingHorizontal: 10,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  bubbleButton: {
+    alignItems: 'center',
+  },
+  bubble: {
+    backgroundColor: '#005AFF',
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    borderRadius: 12,
+    minWidth: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bubbleText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  bubbleTailLeft: {
+    width: 0,
+    height: 0,
+    backgroundColor: 'transparent',
+    borderStyle: 'solid',
+    borderRightWidth: 10,
+    borderTopWidth: 10,
+    borderRightColor: 'transparent',
+    borderTopColor: '#005AFF',
+    alignSelf: 'flex-end',
+    marginRight: 15,
+    marginTop: -2,
+    transform: [{ rotate: '0deg' }]
+  },
+  bubbleTailRight: {
+    width: 0,
+    height: 0,
+    backgroundColor: 'transparent',
+    borderStyle: 'solid',
+    borderLeftWidth: 10,
+    borderTopWidth: 10,
+    borderLeftColor: 'transparent',
+    borderTopColor: '#005AFF',
+    alignSelf: 'flex-start',
+    marginLeft: 15,
+    marginTop: -2,
+  },
+  profileContainer: {
+    marginHorizontal: 15,
+    borderWidth: 2,
+    borderColor: '#000',
+    borderRadius: 50,
+    padding: 2,
+  },
+  dashboardProfileImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+  },
+  plusIconOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    backgroundColor: Colors.APP_RED || '#ef4444',
+    borderRadius: 12,
+    width: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  dashboardLabel: {
+    marginTop: 10,
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#333',
   },
   container: {
     padding: 16,

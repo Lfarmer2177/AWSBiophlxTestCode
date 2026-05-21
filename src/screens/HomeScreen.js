@@ -8,13 +8,15 @@ import {
   ScrollView,
   ActivityIndicator,
   Pressable,
+  Image,
 } from 'react-native';
 import { generateClient } from 'aws-amplify/api';
 import { getCurrentUser, signOut } from 'aws-amplify/auth';
 import { v4 as uuidv4 } from 'uuid';
-import { FontAwesome5 } from '@expo/vector-icons';
+import { FontAwesome5, Ionicons } from '@expo/vector-icons';
 import Body from '../Components/react-native-body-highlighter';
 import Colors from '../Theme/Colors';
+import DirectMessageBottomSheet from '../Components/BottomSheet/DirectMessageBottomSheet';
 import {
   listSessionsByCustomerQuery,
   listSessionItemsBySession,
@@ -44,7 +46,7 @@ const GET_USER = /* GraphQL */ `
 
 const LIST_TRAINERS_BY_USER = /* GraphQL */ `
   query ListTrainers($user_id: ID!) {
-    listTrainers(filter: { user_id: { eq: $user_id } }, limit: 1) {
+    listTrainers(filter: { user_id: { eq: $user_id } }, limit: 500) {
       items { trainer_id user_id }
       nextToken
     }
@@ -156,7 +158,8 @@ const normalizeKey = (val) => {
   return String(unwrapped).trim().toLowerCase();
 };
 
-export default function HomeScreen({ navigation }) {
+export default function HomeScreen({ route, navigation }) {
+  const { fromClientList, clientData } = route?.params || {};
   const client = useMemo(() => generateClient({ authMode: 'userPool' }), []);
   const [bodyData, setBodyData] = useState([]);
   const [loadSelectedDate, setLoadSelectedDate] = useState(formatDate(new Date()));
@@ -180,6 +183,7 @@ export default function HomeScreen({ navigation }) {
   const [trainerId, setTrainerId] = useState(null);
   const [userGender, setUserGender] = useState('male');
   const [userRole, setUserRole] = useState('');
+  const [isMessageSheetVisible, setIsMessageSheetVisible] = useState(false);
   const handleRangeChange = (opt) => {
     setRange(opt);
     setSelectedDate(null);
@@ -293,7 +297,9 @@ export default function HomeScreen({ navigation }) {
     setSessionsLoading(true);
     setSessionsError(null);
     try {
-      const custId = await resolveCustomerId();
+      const current = await getCurrentUser();
+      const activeUser = current?.userId || current?.username;
+      const custId = (fromClientList && clientData?.id) ? clientData.id : activeUser;
       if (!custId) {
         setSessions([]);
         setSessionsLoading(false);
@@ -323,12 +329,12 @@ export default function HomeScreen({ navigation }) {
     } finally {
       setSessionsLoading(false);
     }
-  }, [client, asList, normalizeDate, selectedDate, buildMonthlyMuscleData, range]);
+  }, [client, asList, normalizeDate, selectedDate, buildMonthlyMuscleData, range, fromClientList, clientData]);
 
   useEffect(() => {
     fetchSessions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [fetchSessions]);
 
   // Discover trainer_id to decide whether to show the Trainer dashboard entry
   useEffect(() => {
@@ -336,26 +342,40 @@ export default function HomeScreen({ navigation }) {
       try {
         const current = await getCurrentUser();
         const user_id = current?.userId || current?.username;
-        // Fetch user gender
+        // Fetch user gender (fetch the viewed client's gender if in client view mode)
+        const targetUserId = (fromClientList && clientData?.id) ? clientData.id : user_id;
+        console.log('HomeScreen: Fetching user data for user_id:', targetUserId);
         try {
           const { data } = await client.graphql({
             query: GET_USER,
-            variables: { user_id },
+            variables: { user_id: targetUserId },
           });
           const g = (data?.getUser?.gender || '').toLowerCase();
           if (g === 'female' || g === 'male') setUserGender(g);
-          const r = (data?.getUser?.role || '').toLowerCase();
-          setUserRole(r);
+          
+          // Only fetch/set the role for the logged-in user so we preserve trainer capabilities in the UI
+          if (!fromClientList) {
+            const r = (data?.getUser?.role || '').toLowerCase();
+            setUserRole(r);
+          } else {
+            // If in trainer view mode, we are definitely a trainer
+            setUserRole('trainer');
+          }
         } catch (e) {
-          console.log('HomeScreen: Fetch user role failed', e);
+          console.log('HomeScreen: Fetch user role/gender failed', e);
         }
 
-        // Even if role isn't 'trainer' yet in DB, we check if a trainer record exists
+        // Even if role isn't 'trainer' yet in DB, we check if a trainer record exists for the logged in user
         const { data: tData } = await client.graphql({
           query: LIST_TRAINERS_BY_USER,
           variables: { user_id },
         });
+        
+        console.log('HomeScreen: Fetch trainer data is', tData.listTrainers.items);
+        
+        // Reverted: Trusting the first item returned
         const trainer = tData?.listTrainers?.items?.[0];
+        
         if (trainer?.trainer_id) {
           setTrainerId(trainer.trainer_id);
           console.log('HomeScreen: User has trainer_id:', trainer.trainer_id);
@@ -367,7 +387,7 @@ export default function HomeScreen({ navigation }) {
         console.log('HomeScreen: Fetch trainer for dashboard failed', err);
       }
     })();
-  }, [client]);
+  }, [client, fromClientList, clientData]);
 
   const ensureTrainerId = useCallback(async () => {
     if ((userRole || '').toLowerCase() !== 'trainer') return null;
@@ -841,7 +861,7 @@ export default function HomeScreen({ navigation }) {
         navigation.navigate('WorkoutLibrary');
         break;
       case 'sessions':
-        navigation.navigate('SessionDashboard');
+        navigation.navigate('SessionDashboard', fromClientList ? { fromClientList: true, clientData } : undefined);
         break;
       case 'exercises':
         navigation.navigate('ExerciseLibrary');
@@ -881,24 +901,88 @@ export default function HomeScreen({ navigation }) {
   return (
     <View style={styles.safe}>
       <ScrollView contentContainerStyle={styles.container}>
-        <Text style={styles.title}>Welcome back</Text>
-        <Text style={styles.subtitle}>Choose where to go</Text>
+        {fromClientList && (
+          <View style={styles.topDesignContainer}>
+            <View style={styles.actionRow}>
+              <TouchableOpacity 
+                style={styles.bubbleButton}
+                onPress={() => navigation.navigate('WorkoutLibrary', {
+                  clientData
+                })}
+              >
+                <View style={styles.bubble}>
+                  <Text style={styles.bubbleText}>Send{"\n"}Workout</Text>
+                </View>
+                <View style={styles.bubbleTailLeft} />
+              </TouchableOpacity>
+
+              <View 
+                style={[styles.profileContainer, { justifyContent: 'center', alignItems: 'center' }]}
+              >
+                {clientData?.Demographic?.profile_image_url ? (
+                  <Image
+                    source={{ uri: clientData.Demographic.profile_image_url }}
+                    style={styles.dashboardProfileImage}
+                  />
+                ) : (
+                  <Ionicons name="person" size={54} color="#000" />
+                )}
+              </View>
+
+              <TouchableOpacity 
+                style={styles.bubbleButton}
+                onPress={() => setIsMessageSheetVisible(true)}
+              >
+                <View style={styles.bubble}>
+                  <Text style={styles.bubbleText}>Send{"\n"}Message</Text>
+                </View>
+                <View style={styles.bubbleTailRight} />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.clientNameText}>{clientData?.Demographic?.name || 'Client'}</Text>
+          </View>
+        )}
+
+        {!fromClientList && 
+          <>
+            <Text style={styles.title}>Welcome back</Text>
+            <Text style={styles.subtitle}>Choose where to go</Text>
+          </>
+        }
 
         <View style={styles.grid}>
           {(() => {
             const base = [...actions];
-            if (trainerId && userRole === 'trainer') base.push({ label: 'Trainer Dashboard', key: 'trainerDash' });
-            return base.map((action) => (
-              <TouchableOpacity
-                key={action.key}
-                style={[styles.card, action.accent && styles.cardAccent]}
-                onPress={() => handleAction(action.key)}
-              >
-              <Text style={[styles.cardText, action.accent && styles.cardTextAccent]}>
-                {action.label}
-              </Text>
-            </TouchableOpacity>
-            ));
+            if (trainerId && userRole === 'trainer' && !fromClientList) {
+              base.push({ label: 'Trainer Dashboard', key: 'trainerDash' });
+            }
+            return base.map((action) => {
+              const isCardDisabled = fromClientList && action.key !== 'sessions';
+              return (
+                <TouchableOpacity
+                  key={action.key}
+                  style={[
+                    styles.card, 
+                    action.accent && styles.cardAccent,
+                    isCardDisabled && { backgroundColor: '#f1f5f9', opacity: 0.5 }
+                  ]}
+                  onPress={() => {
+                    if (!isCardDisabled) {
+                      handleAction(action.key);
+                    }
+                  }}
+                  disabled={isCardDisabled}
+                >
+                  <Text style={[
+                    styles.cardText, 
+                    action.accent && styles.cardTextAccent,
+                    isCardDisabled && { color: '#94a3b8' }
+                  ]}>
+                    {action.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            });
           })()}
         </View>
 
@@ -1051,10 +1135,18 @@ export default function HomeScreen({ navigation }) {
           {sessions.slice(0, 5).map(renderSession)}
         </View>
 
-        <TouchableOpacity onPress={backToAuth} style={styles.signOut}>
-          <Text style={styles.signOutText}>Sign out</Text>
-        </TouchableOpacity>
+        {!fromClientList && (
+          <TouchableOpacity onPress={backToAuth} style={styles.signOut}>
+            <Text style={styles.signOutText}>Sign out</Text>
+          </TouchableOpacity>
+        )}
       </ScrollView>
+      <DirectMessageBottomSheet
+        isVisible={isMessageSheetVisible}
+        onClose={() => setIsMessageSheetVisible(false)}
+        recipientName={clientData?.Demographic?.name || 'Client'}
+        sendTo={clientData?.Demographic?.email || ''}
+      />
     </View>
   );
 }
@@ -1065,7 +1157,9 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
   },
   container: {
-    padding: 20,
+    // padding: 20,
+    paddingHorizontal: 20,
+    paddingBottom:20,
     paddingBottom: 32,
   },
   title: {
@@ -1357,5 +1451,83 @@ const styles = StyleSheet.create({
     marginTop: 4,
     gap: 2,
   },
+  topDesignContainer: {
+    alignItems: 'center',
+    marginVertical: 20,
+    paddingHorizontal: 10,
+  },
+  actionRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  bubbleButton: {
+    alignItems: 'center',
+  },
+  bubble: {
+    backgroundColor: '#005AFF',
+    paddingVertical: 10,
+    paddingHorizontal: 15,
+    borderRadius: 12,
+    minWidth: 100,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  bubbleText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+  bubbleTailLeft: {
+    width: 0,
+    height: 0,
+    backgroundColor: 'transparent',
+    borderStyle: 'solid',
+    borderRightWidth: 10,
+    borderTopWidth: 10,
+    borderRightColor: 'transparent',
+    borderTopColor: '#005AFF',
+    alignSelf: 'flex-end',
+    marginRight: 15,
+    marginTop: -2,
+    transform: [{ rotate: '0deg' }]
+  },
+  bubbleTailRight: {
+    width: 0,
+    height: 0,
+    backgroundColor: 'transparent',
+    borderStyle: 'solid',
+    borderLeftWidth: 10,
+    borderTopWidth: 10,
+    borderLeftColor: 'transparent',
+    borderTopColor: '#005AFF',
+    alignSelf: 'flex-start',
+    marginLeft: 15,
+    marginTop: -2,
+  },
+  profileContainer: {
+    marginHorizontal: 15,
+    borderWidth: 2,
+    borderColor: '#000',
+    borderRadius: 50,
+    padding: 2,
+    width: 88,
+    height: 88,
+  },
+  dashboardProfileImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+  },
+  clientNameText: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#000',
+    marginTop: 10,
+  },
 });
+
+
 

@@ -1,8 +1,13 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { View, Text, StyleSheet, Image, FlatList, TouchableOpacity, ScrollView, ActivityIndicator, Alert, Linking, RefreshControl } from 'react-native';
+import { View, Text, StyleSheet, Image, FlatList, TouchableOpacity, ScrollView, ActivityIndicator, Alert, Linking, RefreshControl, SafeAreaView } from 'react-native';
 import { generateClient } from 'aws-amplify/api';
 import { getCurrentUser } from 'aws-amplify/auth';
 import { listPermissionsByUser } from '../graphql/queries';
+import { Ionicons } from '@expo/vector-icons';
+import * as ImagePicker from 'expo-image-picker';
+import { uploadData } from 'aws-amplify/storage';
+import DirectMessageBottomSheet from '../Components/BottomSheet/DirectMessageBottomSheet';
+import Colors from '../Theme/Colors';
 
 const GET_TRAINER = /* GraphQL */ `
   query GetTrainer($trainer_id: ID!) {
@@ -14,7 +19,16 @@ const GET_TRAINER = /* GraphQL */ `
 
 const GET_USER = /* GraphQL */ `
   query GetUser($user_id: ID!) {
-    getUser(user_id: $user_id) { user_id bio first_name last_name city state }
+    getUser(user_id: $user_id) { user_id bio first_name last_name city state profile_image_url }
+  }
+`;
+
+const UPDATE_USER = /* GraphQL */ `
+  mutation UpdateUser($input: UpdateUserInput!) {
+    updateUser(input: $input) {
+      user_id
+      profile_image_url
+    }
   }
 `;
 
@@ -126,11 +140,116 @@ export default function TrainerProfile({ route, navigation }) {
   const [purchasing, setPurchasing] = useState(null);
   const [purchasedProductIds, setPurchasedProductIds] = useState(new Set());
   const [refreshing, setRefreshing] = useState(false);
+  const [isMessageSheetVisible, setIsMessageSheetVisible] = useState(false);
+  const [profileImage, setProfileImage] = useState('https://via.placeholder.com/80');
+  const [uploading, setUploading] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState(null);
+
+  const pickImage = async () => {
+    try {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Permission Denied', 'Sorry, we need camera roll permissions to make this work!');
+        return;
+      }
+
+      let result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 1,
+      });
+
+      if (result.canceled) return;
+
+      setUploading(true);
+      const selectedUri = result.assets[0].uri;
+
+      // 1. Fetch local file and convert to Blob
+      const response = await fetch(selectedUri);
+      const blob = await response.blob();
+
+      // Get current user details
+      const current = await getCurrentUser();
+      const activeUserId = current?.userId || current?.username;
+
+      if (!activeUserId) {
+        Alert.alert('Error', 'Unable to authenticate. Please log in again.');
+        setUploading(false);
+        return;
+      }
+
+      // Check if trying to edit someone else's profile
+      if (user_id && user_id !== activeUserId) {
+        Alert.alert('Unauthorized', 'You cannot change another trainer\'s profile picture.');
+        setUploading(false);
+        return;
+      }
+
+      // 2. Upload to S3
+      const s3Path = `profile-pics/${activeUserId}.jpg`;
+      console.log('TrainerProfile: Uploading to S3 path:', s3Path);
+
+      const uploadResult = await uploadData({
+        path: s3Path,
+        data: blob,
+        options: {
+          contentType: 'image/jpeg',
+        }
+      }).result;
+
+      console.log('TrainerProfile: S3 Upload success:', uploadResult);
+
+      // 3. Construct the public direct S3 URL
+      const publicUrl = `https://biophlx-profile-pictures.s3.us-east-2.amazonaws.com/${s3Path}`;
+      console.log('TrainerProfile: Generated Public Image URL:', publicUrl);
+
+      // 4. Update the DB record (preserving existing user info to prevent overwrite by PutItem resolvers)
+      const userInput = {
+        user_id: activeUserId,
+        first_name: user?.first_name || undefined,
+        last_name: user?.last_name || undefined,
+        gender: user?.gender || undefined,
+        city: user?.city || undefined,
+        state: user?.state || undefined,
+        age: user?.age || undefined,
+        current_weight: user?.current_weight || undefined,
+        height_inches: user?.height_inches || undefined,
+        fitness_goal: user?.fitness_goal || undefined,
+        workout_location: user?.workout_location || undefined,
+        bio: user?.bio || undefined,
+        role: user?.role || undefined,
+        profile_image_url: publicUrl,
+      };
+
+      // Filter out undefined fields
+      Object.keys(userInput).forEach(key => userInput[key] === undefined && delete userInput[key]);
+
+      await client.graphql({
+        query: UPDATE_USER,
+        variables: {
+          input: userInput
+        }
+      });
+
+      // Update local state so changes reflect instantly
+      setUser(prev => prev ? { ...prev, profile_image_url: publicUrl } : null);
+
+      setProfileImage(publicUrl);
+      Alert.alert('Success', 'Profile picture updated successfully!');
+    } catch (err) {
+      console.log('TrainerProfile: Profile pic update failed', err);
+      Alert.alert('Update Failed', err?.message || 'Failed to update profile picture.');
+    } finally {
+      setUploading(false);
+    }
+  };
 
   const loadPermissions = useCallback(async () => {
     try {
       const current = await getCurrentUser();
       const buyer_id = current?.userId || current?.username;
+      setCurrentUserId(buyer_id);
       
       if (buyer_id) {
         const { data: permData } = await client.graphql({
@@ -335,7 +454,12 @@ export default function TrainerProfile({ route, navigation }) {
       }
       if (user_id) {
         const { data } = await client.graphql({ query: GET_USER, variables: { user_id } });
-        setUser(data?.getUser || null);
+        const u = data?.getUser || null;
+        console.log('TrainerProfile: Loaded user data on screen enter:', JSON.stringify(u, null, 2));
+        setUser(u);
+        if (u?.profile_image_url) {
+          setProfileImage(u.profile_image_url);
+        }
       }
 
       // Load current user's permissions to check for existing purchases
@@ -467,6 +591,8 @@ export default function TrainerProfile({ route, navigation }) {
     );
   };
 
+  const isOwnProfile = !user_id || (currentUserId && user_id === currentUserId);
+
   if (loading) {
     return (
       <View style={styles.center}>
@@ -485,41 +611,87 @@ export default function TrainerProfile({ route, navigation }) {
   }
 
   return (
-    <FlatList
-      data={products}
-      keyExtractor={(item) => item.workout_product_id}
-      renderItem={renderProduct}
-      refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-      }
-      ListHeaderComponent={
-        <View style={styles.header}>
-          <Text style={styles.title}>Trainer Profile</Text>
-          <Text style={styles.meta}>
-            {user?.first_name || ''} {user?.last_name || ''}
-          </Text>
-          <Text style={styles.meta}>
-            {user?.city || ''}{user?.city && user?.state ? ', ' : ''}{user?.state || ''}
-          </Text>
-          <Text style={styles.meta}>Bio: {user?.bio || 'N/A'}</Text>
-          <Text style={styles.meta}>Focus: {trainer.training_focus || 'N/A'}</Text>
-          <Text style={[styles.title, { marginTop: 16 }]}>Virtual Training Services</Text>
-          <Text style={{ fontSize: 10, color: '#999' }}>Trainer ID: {trainer_id}</Text>
-          {services.length ? (
-            services.map((svc) => (
-              <View key={unwrapString(svc.service_id)}>
-                {renderService({ item: svc })}
+    <SafeAreaView style={{ flex: 1, backgroundColor: Colors.APP_WHITE || '#fff' }}>
+      <FlatList
+        data={products}
+        keyExtractor={(item) => item.workout_product_id}
+        renderItem={renderProduct}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+        ListHeaderComponent={
+          <View style={styles.header}>
+            <View style={styles.headerTopRow}>
+              <TouchableOpacity 
+                style={styles.profileContainer}
+                onPress={pickImage}
+                disabled={!isOwnProfile || uploading}
+              >
+                <Image
+                  source={{ uri: profileImage }}
+                  style={styles.dashboardProfileImage}
+                />
+                {uploading && (
+                  <View style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.4)', justifyContent: 'center', alignItems: 'center', borderRadius: 40, margin: 2 }]}>
+                    <ActivityIndicator size="small" color="#fff" />
+                  </View>
+                )}
+                {isOwnProfile && !uploading && (
+                  <View style={styles.plusIconOverlay}>
+                    <Ionicons name="add" size={16} color="#fff" />
+                  </View>
+                )}
+              </TouchableOpacity>
+
+              <View style={styles.headerInfo}>
+                <Text style={styles.title}>{user?.first_name || ''} {user?.last_name || ''}</Text>
+                {/* <Text style={styles.meta}>
+                  {user?.first_name || ''} {user?.last_name || ''}
+                </Text> */}
+                <Text style={styles.meta}>
+                  {user?.city || ''}{user?.city && user?.state ? ', ' : ''}{user?.state || ''}
+                </Text>
               </View>
-            ))
-          ) : (
-            <Text style={styles.meta}>No virtual training services yet.</Text>
-          )}
-          <Text style={[styles.title, { marginTop: 16 }]}>Workout Products</Text>
-        </View>
-      }
-      contentContainerStyle={products.length ? styles.list : styles.center}
-      ListEmptyComponent={<Text>No workout products yet.</Text>}
-    />
+
+              <TouchableOpacity 
+                style={styles.messageIconButton}
+                onPress={() => setIsMessageSheetVisible(true)}
+              >
+                <Ionicons name="mail" size={24} color={Colors.APP_WHITE || '#fff'} />
+              </TouchableOpacity>
+            </View>
+
+            <Text style={[styles.meta2, { marginTop: 5 }]}>Bio: {user?.bio || 'N/A'}</Text>
+            {/* <Text style={styles.meta}>Focus: {trainer.training_focus || 'N/A'}</Text> */}
+            <Text style={[styles.title, { marginTop: 16 }]}>Virtual Training Services</Text>
+            <Text style={{ fontSize: 10, color: '#999',marginBottom:10 }}>Trainer ID: {trainer_id}</Text>
+            {services.length ? (
+              services.map((svc) => (
+                <View key={unwrapString(svc.service_id)}>
+                  {renderService({ item: svc })}
+                </View>
+              ))
+            ) : (
+              <Text style={styles.meta}>No virtual training services yet.</Text>
+            )}
+            <Text style={[styles.title, { marginTop: 16 }]}>Workout Products</Text>
+          </View>
+        }
+        contentContainerStyle={[styles.list, { paddingBottom: 100 }]}
+        ListEmptyComponent={
+          <View style={{ padding: 24, alignItems: 'center' }}>
+            <Text style={styles.meta}>No workout products yet.</Text>
+          </View>
+        }
+        showsVerticalScrollIndicator={false}
+      />
+      <DirectMessageBottomSheet
+        isVisible={isMessageSheetVisible}
+        onClose={() => setIsMessageSheetVisible(false)}
+        recipientName={`${user?.first_name || ''} ${user?.last_name || ''}`.trim() || 'Trainer'}
+        sendTo={''} // No email in GraphQL for now as requested
+      />
+    </SafeAreaView>
   );
 }
 
@@ -532,7 +704,7 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   header: {
-    padding: 16,
+     padding: 5,
   },
   title: {
     fontSize: 20,
@@ -540,6 +712,10 @@ const styles = StyleSheet.create({
   },
   meta: {
     color: '#475569',
+    marginTop: 4,
+  },
+  meta2: {
+    color: Colors.APP_RED,
     marginTop: 4,
   },
   list: {
@@ -571,5 +747,52 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontWeight: '700',
     textAlign: 'center',
+  },
+  headerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+  },
+  headerInfo: {
+    flex: 1,
+    marginLeft: 15,
+  },
+  profileContainer: {
+    borderWidth: 2,
+    borderColor: '#000',
+    borderRadius: 50,
+    padding: 2,
+    position: 'relative',
+  },
+  dashboardProfileImage: {
+    width: 80,
+    height: 80,
+    borderRadius: 40,
+  },
+  plusIconOverlay: {
+    position: 'absolute',
+    bottom: 0,
+    right: 0,
+    backgroundColor: Colors.APP_RED || '#ef4444',
+    borderRadius: 12,
+    width: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 2,
+    borderColor: '#fff',
+  },
+  messageIconButton: {
+    backgroundColor: Colors.APP_RED || '#ef4444',
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 4,
   },
 });
