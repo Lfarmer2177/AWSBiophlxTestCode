@@ -2,7 +2,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
-  AppState,
   Button,
   Dimensions,
   FlatList,
@@ -19,36 +18,69 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
-import { BleManager } from 'react-native-ble-plx';
+// import { BleManager } from 'react-native-ble-plx';
 import base64 from 'react-native-base64';
-import { Svg, Polygon, Line, Circle, Text as SvgText } from 'react-native-svg';
+// Add these imports
+import { Svg, Polygon, Line, Circle, Path, Text as SvgText } from 'react-native-svg'; // Already there, add Path
+import { useBle } from '../context/BleContext';
+import {
+  BleUuids,
+  DeviceCommands,
+  ExerciseStage,
+  ExerciseLimb,
+  ExerciseSide,
+  ExerciseType,
+  createCommand,
+  exerciseStageFromValue,
+} from '../constants/bleConstants';
 import { v4 as uuidv4 } from 'uuid';
 import { generateClient } from 'aws-amplify/api';
 import { getCurrentUser } from 'aws-amplify/auth';
 import { listExercises } from '../graphql/queries';
 
+
+
+const workoutCommand = (exerciseType, limb = ExerciseLimb.undefined.value) =>
+  createCommand(DeviceCommands.start, {
+    exerciseType,
+    limb,
+    side: ExerciseSide.both.value,
+  });
+
+const normalizeCommandBytes = (command) => {
+  if (command instanceof Uint8Array) return Array.from(command);
+  if (Array.isArray(command)) return command.map((n) => Number(n));
+  if (typeof command === 'string') {
+    const trimmed = command.trim();
+    if (!trimmed) return [];
+    return trimmed.split(',').map((n) => parseInt(n.trim(), 10));
+  }
+  return [];
+};
+
+
 const WORKOUT_LIBRARY = [
-  { label: 'Barbell Bench Press', command: '4,0', aliases: ['Barbell Bench'] },
-  { label: 'Bench Dips', command: '4,1' },
-  { label: 'Dumbbell Lateral Raises', command: '4,2', aliases: ['Dumbbell Lateral Raise'] },
-  { label: 'Dumbbell Single Arm Row', command: '4,3' },
-  { label: 'Seated Dumbbell Shoulder Press', command: '4,4', aliases: ['Seated Dumbbell Overhead Shoulder Press'] },
-  { label: 'Push Ups', command: '4,5', aliases: ['Push Up Option'] },
-  { label: 'Air Squats', command: '4,6', aliases: ['Air Squat Option'] },
-  { label: 'Barbell Deadlift', command: '4,7' },
-  { label: 'Barbell Back Squat', command: '4,8' },
-  { label: 'Bodyweight Front Lunges', command: '4,9', aliases: ['Front Lunges'] },
-  { label: 'Laying Leg Raises', command: '4,10' },
-  { label: 'Mountain Climbers', command: '4,11' },
+  { label: 'Barbell Bench Press', command: workoutCommand(ExerciseType.barbellBench.value, ExerciseLimb.arm.value), aliases: ['Barbell Bench'] },
+  { label: 'Bench Dips', command: workoutCommand(ExerciseType.benchDips.value, ExerciseLimb.arm.value) },
+  { label: 'Dumbbell Lateral Raises', command: workoutCommand(ExerciseType.lateralRaise.value, ExerciseLimb.arm.value), aliases: ['Dumbbell Lateral Raise'] },
+  { label: 'Dumbbell Single Arm Row', command: workoutCommand(ExerciseType.dumbellRow.value, ExerciseLimb.arm.value) },
+  { label: 'Seated Dumbbell Shoulder Press', command: workoutCommand(ExerciseType.overheadPress.value, ExerciseLimb.arm.value), aliases: ['Seated Dumbbell Overhead Shoulder Press'] },
+  { label: 'Push Ups', command: workoutCommand(ExerciseType.pushUp.value, ExerciseLimb.arm.value), aliases: ['Push Up Option'] },
+  { label: 'Air Squats', command: workoutCommand(ExerciseType.airSquat.value, ExerciseLimb.leg.value), aliases: ['Air Squat Option'] },
+  { label: 'Barbell Deadlift', command: workoutCommand(ExerciseType.barbellDeadlift.value, ExerciseLimb.leg.value) },
+  { label: 'Barbell Back Squat', command: workoutCommand(ExerciseType.barbellSquat.value, ExerciseLimb.leg.value) },
+  { label: 'Bodyweight Front Lunges', command: workoutCommand(ExerciseType.dumbellLunge.value, ExerciseLimb.leg.value), aliases: ['Front Lunges'] },
+  { label: 'Laying Leg Raises', command: workoutCommand(ExerciseType.layingLegRaise.value, ExerciseLimb.leg.value) },
+  { label: 'Mountain Climbers', command: workoutCommand(ExerciseType.mountainClimbers.value, ExerciseLimb.undefined.value) },
   {
     label: 'Dumbbell Squat and Overhead Press',
-    command: '4,12',
-    secondaryCommand: '4,13',
+    command: workoutCommand(ExerciseType.squatAndPressLower.value, ExerciseLimb.leg.value),
+    secondaryCommand: workoutCommand(ExerciseType.squatAndPressUpper.value, ExerciseLimb.arm.value),
     aliases: ['Weighted Squat and Overhead Press'],
   },
 ];
 
-const WORKOUT_COMMANDS = WORKOUT_LIBRARY.reduce((acc, workout) => {
+const WORKOUT_COMMANDS = WORKOUT_LIBRARY?.reduce((acc, workout) => {
   acc[workout.label] = workout;
   if (Array.isArray(workout.aliases)) {
     workout.aliases.forEach((alias) => {
@@ -59,6 +91,23 @@ const WORKOUT_COMMANDS = WORKOUT_LIBRARY.reduce((acc, workout) => {
 }, {});
 
 const DEFAULT_WORKOUT_OPTIONS = WORKOUT_LIBRARY.map((item) => item.label);
+const BODYWEIGHT_WORKOUT_LABELS = new Set([
+  'Air Squats',
+  'Air Squat Option',
+  'Push Ups',
+  'Push Up Option',
+  'Bodyweight Front Lunges',
+  'Front Lunges',
+  'Bench Dips',
+]);
+const GET_USER_WEIGHT = /* GraphQL */ `
+  query GetUserWeight($user_id: ID!) {
+    getUser(user_id: $user_id) {
+      user_id
+      current_weight
+    }
+  }
+`;
 const normalizeLabel = (value) => {
   if (!value) return '';
   if (typeof value === 'object') {
@@ -79,22 +128,22 @@ const toNumberValue = (value) => {
   return Number.isFinite(num) ? num : null;
 };
 const screenWidth = Dimensions.get('window').width;
-const bleManager = new BleManager();
+// const bleManager = new BleManager();
 
-const SERVICE_UUIDS = {
-  deviceStatus: 'eae2f5f4-b18f-4f4d-0001-100000000000',
-  command: 'eae2f5f4-b18f-4f4d-0002-100000000000',
-};
+// const SERVICE_UUIDS = {
+//   deviceStatus: 'eae2f5f4-b18f-4f4d-0001-100000000000',
+//   command: 'eae2f5f4-b18f-4f4d-0002-100000000000',
+// };
 
-const CHARACTERISTICS = {
-  rom: 'eae2f5f4-b18f-4f4d-0001-100000000002',
-  tut: 'eae2f5f4-b18f-4f4d-0001-100000000003',
-  velocity: 'eae2f5f4-b18f-4f4d-0001-100000000005',
-  currentPosition: 'eae2f5f4-b18f-4f4d-0001-100000000001',
-  command: 'eae2f5f4-b18f-4f4d-0002-100000000001',
-  reps: 'eae2f5f4-b18f-4f4d-0001-100000000004',
-  sets: 'eae2f5f4-b18f-4f4d-0001-100000000006',
-};
+// const CHARACTERISTICS = {
+//   rom: 'eae2f5f4-b18f-4f4d-0001-100000000002',
+//   tut: 'eae2f5f4-b18f-4f4d-0001-100000000003',
+//   velocity: 'eae2f5f4-b18f-4f4d-0001-100000000005',
+//   currentPosition: 'eae2f5f4-b18f-4f4d-0001-100000000001',
+//   command: 'eae2f5f4-b18f-4f4d-0002-100000000001',
+//   reps: 'eae2f5f4-b18f-4f4d-0001-100000000004',
+//   sets: 'eae2f5f4-b18f-4f4d-0001-100000000006',
+// };
 
 const tutOptions = [
   { label: 'Easy', value: 1 },
@@ -108,6 +157,14 @@ const velOptions = [
   { label: 'Intense', value: 0.5 },
 ];
 const LOAD_OPTIONS = [2.5, 5, 10, 25, 35, 45];
+const COUNTDOWN_SECONDS = 3;
+const SECONDARY_COMMAND_DELAY_MS = 500;
+
+const isIdleStage = (stage) => stage === ExerciseStage.idle.value;
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+
 
 function SvgRadarChart({ data, size = 200, max = 100 }) {
   const margin = 40;
@@ -292,6 +349,7 @@ const IntensityBars = ({ data, onInfo }) => {
   );
 };
 
+
 export default function WorkoutRunner({ route }) {
   const workoutPlan = route?.params?.workoutPlan || null;
   const scheduledItems = Array.isArray(workoutPlan?.items) ? workoutPlan.items : [];
@@ -348,32 +406,41 @@ export default function WorkoutRunner({ route }) {
     }
     return DEFAULT_WORKOUT_OPTIONS;
   }, [normalizedPlanItems]);
-const [selectedWorkout, setSelectedWorkout] = useState(
-  workoutOptions[0] || DEFAULT_WORKOUT_OPTIONS[0]
-);
-const [readyModalVisible, setReadyModalVisible] = useState(false);
-const [pendingWorkout, setPendingWorkout] = useState(null);
-const handleInfo = useCallback(
-  (item) => {
-    if (!item?.info) return;
-    setInfoModal({ visible: true, title: item.title, text: item.info });
-  },
-  []
-);
-const client = useMemo(() => generateClient({ authMode: 'userPool' }), []);
-const [connectedDevice, setConDev] = useState(null);
-const [secondaryDevice, setSecondaryDevice] = useState(null);
-const [exerciseMap, setExerciseMap] = useState({});
-const [feedback, setFeedback] = useState({
-  ROM: 0,
-  TUT: 0,
-  Velocity: 0,
-  Score: 0,
-  'Current Position': 0,
-  reps: 0,
-  sets: 0,
-});
-const [secondaryFeedback, setSecondaryFeedback] = useState({ ROM: 0 });
+  const [selectedWorkout, setSelectedWorkout] = useState(
+    workoutOptions[0] || DEFAULT_WORKOUT_OPTIONS[0]
+  );
+  const [readyModalVisible, setReadyModalVisible] = useState(false);
+  const [pendingWorkout, setPendingWorkout] = useState(null);
+
+  const handleInfo = useCallback(
+    (item) => {
+      if (!item?.info) return;
+      setInfoModal({ visible: true, title: item.title, text: item.info });
+    },
+    []
+  );
+  const client = useMemo(() => generateClient({ authMode: 'userPool' }), []);
+  // const [connectedDevice, setConDev] = useState(null);
+  // const [secondaryDevice, setSecondaryDevice] = useState(null);
+  const {
+    connectedDevice,
+    secondaryDevice,
+    feedback,
+    secondaryFeedback,
+    readCurrentPosition,
+    deviceSettings,
+  } = useBle();
+  const [exerciseMap, setExerciseMap] = useState({});
+  // const [feedback, setFeedback] = useState({
+  //   ROM: 0,
+  //   TUT: 0,
+  //   Velocity: 0,
+  //   Score: 0,
+  //   'Current Position': 0,
+  //   reps: 0,
+  //   sets: 0,
+  // });
+  // const [secondaryFeedback, setSecondaryFeedback] = useState({ ROM: 0 });
   const [tutLevel, setTutLevel] = useState(0);
   const [velLevel, setVelLevel] = useState(0);
   const [weight, setWeight] = useState(0);
@@ -384,7 +451,6 @@ const [secondaryFeedback, setSecondaryFeedback] = useState({ ROM: 0 });
   const [summaryModalVisible, setSummaryModalVisible] = useState(false);
   const [savingWorkout, setSavingWorkout] = useState(false);
   const [currentSessionId, setCurrentSessionId] = useState(null);
-  const [showDeviceModal, setShowDeviceModal] = useState(false);
   const [scannedDevices, setScannedDevices] = useState([]);
   const [connecting, setConnecting] = useState(false);
   const [bleState, setBleState] = useState(null);
@@ -408,6 +474,22 @@ const [secondaryFeedback, setSecondaryFeedback] = useState({ ROM: 0 });
 
   const maxTUT = tutOptions[tutLevel]?.value || 1;
   const maxVelocity = velOptions[velLevel]?.value || 1;
+  const countdownWorkoutLabel = pendingWorkout || selectedWorkout || 'Workout';
+  const areBothDevicesConnected = Boolean(connectedDevice && secondaryDevice);
+  const isPrimaryStill = connectedDevice ? isIdleStage(feedback?.exerciseStage) : false;
+  const isSecondaryStill = secondaryDevice ? isIdleStage(secondaryFeedback?.exerciseStage) : false;
+  const isUserStill = areBothDevicesConnected && isPrimaryStill && isSecondaryStill;
+  const countdownStatusLabel = !areBothDevicesConnected
+    ? 'Waiting for both devices to connect'
+    : isUserStill
+      ? 'Both devices stable'
+      : `Movement detected (${[
+        !isPrimaryStill ? `Device 1: ${exerciseStageFromValue(feedback?.exerciseStage)}` : null,
+        !isSecondaryStill ? `Device 2: ${exerciseStageFromValue(secondaryFeedback?.exerciseStage)}` : null,
+      ]
+        .filter(Boolean)
+        .join(' | ')})`;
+
   const currentWorkoutItem = useMemo(() => {
     const key = (pendingWorkout || selectedWorkout || '').toLowerCase();
     if (!key) return null;
@@ -420,6 +502,39 @@ const [secondaryFeedback, setSecondaryFeedback] = useState({ ROM: 0 });
   }, [pendingWorkout, selectedWorkout, normalizedPlanItems]);
   const showManualTargets = !currentWorkoutItem?.workout_id;
 
+  const activeWorkoutLabel = pendingWorkout || selectedWorkout || workoutRef.current || '';
+  const buildLiveMetricPoints = (metricKey, sourceRows, seriesKey) => {
+    if (!activeWorkoutLabel) return [];
+
+    const repCountsBySet = {};
+    let overallRep = 0;
+
+    return sourceRows?.reduce((acc, row) => {
+      if ((row?.workout || '') !== activeWorkoutLabel) return acc;
+
+      const setNo = row?.setNo && String(row.setNo).trim() ? String(row.setNo).trim() : '1';
+      repCountsBySet[setNo] = (repCountsBySet[setNo] || 0) + 1;
+      overallRep += 1;
+
+      const value = Number(row?.[metricKey]);
+      acc.push({
+        key: row.id || `${seriesKey}-${setNo}-${repCountsBySet[setNo]}-${overallRep}`,
+        label: `${overallRep}`,
+        detailLabel: `Set ${setNo} Rep ${repCountsBySet[setNo]}`,
+        value: Number.isFinite(value) ? value : 0,
+      });
+      return acc;
+    }, []);
+  };
+  const [secondaryRows, setSecondaryRows] = useState([]);
+  const liveRomPoints = buildLiveMetricPoints('rom', rows, 'primary-rom');
+  const liveTutPoints = buildLiveMetricPoints('tut', rows, 'primary-tut');
+  const liveVelocityPoints = buildLiveMetricPoints('velocity', rows, 'primary-velocity');
+  const liveSecondaryRomPoints = buildLiveMetricPoints('rom', secondaryRows, 'secondary-rom');
+  const liveSecondaryTutPoints = buildLiveMetricPoints('tut', secondaryRows, 'secondary-tut');
+  const liveSecondaryVelocityPoints = buildLiveMetricPoints('velocity', secondaryRows, 'secondary-velocity');
+
+
   const average = (arr) => (arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : 0);
   const sum = (arr) => arr.reduce((a, b) => a + b, 0);
   const adjustWeight = useCallback(
@@ -431,6 +546,16 @@ const [secondaryFeedback, setSecondaryFeedback] = useState({ ROM: 0 });
     },
     [setWeight]
   );
+
+  const [exerciseSelectionExpanded, setExerciseSelectionExpanded] = useState(true);
+  const [trainingSettingsExpanded, setTrainingSettingsExpanded] = useState(true);
+  const [workoutPhase, setWorkoutPhase] = useState('idle');
+  const [countdownSeconds, setCountdownSeconds] = useState(COUNTDOWN_SECONDS);
+  const [profileWeight, setProfileWeight] = useState(null);
+  const prevSecondaryRepsRef = useRef(secondaryFeedback.reps ?? 0);
+
+
+
   useEffect(() => {
     feedbackRef.current = feedback;
   }, [feedback]);
@@ -441,37 +566,68 @@ const [secondaryFeedback, setSecondaryFeedback] = useState({ ROM: 0 });
   useEffect(() => {
     weightRef.current = weight;
   }, [weight]);
-
+  // Load user profile weight
   useEffect(() => {
-    const loadExercises = async () => {
+    let active = true;
+    const loadProfileWeight = async () => {
       try {
-        const { data } = await client.graphql({ query: listExercises, variables: { limit: 500 } });
-        const list = Array.isArray(data?.listExercises?.items) ? data.listExercises.items : [];
-        const map = {};
-        list.forEach((ex) => {
-          if (!ex?.exercise_id) return;
-          map[ex.exercise_id] = ex;
-          if (ex.name) map[ex.name] = ex;
+        const current = await getCurrentUser();
+        const user_id = current?.userId || current?.username;
+        if (!user_id) return;
+        const { data } = await client.graphql({
+          query: GET_USER_WEIGHT,
+          variables: { user_id },
         });
-        setExerciseMap(map);
+        const value = Number(data?.getUser?.current_weight);
+        if (active) {
+          setProfileWeight(Number.isFinite(value) ? value : null);
+        }
       } catch (err) {
-        console.log('Fetch exercises failed', err);
+        console.log('Fetch profile weight failed', err);
       }
     };
-    loadExercises();
+    loadProfileWeight();
+    return () => {
+      active = false;
+    };
   }, [client]);
 
+  // Auto-set weight for bodyweight exercises
   useEffect(() => {
-    if (!workoutOptions.length) return;
-    setSelectedWorkout((prev) => (workoutOptions.includes(prev) ? prev : workoutOptions[0]));
-    if (!workoutOptions.includes(workoutRef.current)) {
-      workoutRef.current = workoutOptions[0];
-    }
-  }, [workoutOptions]);
+    if (!BODYWEIGHT_WORKOUT_LABELS.has(selectedWorkout)) return;
+    if (!Number.isFinite(profileWeight)) return;
+    setWeight(profileWeight);
+  }, [profileWeight, selectedWorkout]);
 
+  // Monitor device connection for workout phase
   useEffect(() => {
-    workoutRef.current = selectedWorkout;
-  }, [selectedWorkout]);
+    if (!connectedDevice && workoutPhase !== 'idle') {
+      setWorkoutPhase('idle');
+      setCountdownSeconds(COUNTDOWN_SECONDS);
+    }
+  }, [connectedDevice, workoutPhase]);
+
+  // Countdown timer logic
+  useEffect(() => {
+    if (workoutPhase !== 'countdown') return undefined;
+
+    if (!isUserStill) {
+      setCountdownSeconds(COUNTDOWN_SECONDS);
+      return undefined;
+    }
+
+    const timer = setTimeout(() => {
+      if (countdownSeconds <= 1) {
+        setCountdownSeconds(0);
+        setWorkoutPhase('active');
+        return;
+      }
+      setCountdownSeconds((prev) => prev - 1);
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [countdownSeconds, isUserStill, workoutPhase]);
+
 
   const getCompletionPercent = useCallback(
     (entry) => {
@@ -490,70 +646,6 @@ const [secondaryFeedback, setSecondaryFeedback] = useState({ ROM: 0 });
     sessionIdRef.current = currentSessionId;
   }, [currentSessionId]);
 
-  const requestBlePermissions = useCallback(async () => {
-    if (Platform.OS === 'android') {
-      await PermissionsAndroid.requestMultiple([
-        PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-        PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-        PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-      ]);
-    }
-  }, []);
-
-  const schedulePermissionRequest = useCallback(() => {
-    if (permissionTimeoutRef.current) {
-      clearTimeout(permissionTimeoutRef.current);
-    }
-    permissionTimeoutRef.current = setTimeout(() => {
-      requestBlePermissions();
-      permissionTimeoutRef.current = null;
-    }, 30000);
-  }, [requestBlePermissions]);
-
-  useEffect(() => {
-    schedulePermissionRequest();
-    const appStateSub = AppState.addEventListener('change', (state) => {
-      if (state === 'active') {
-        schedulePermissionRequest();
-      }
-    });
-    const subscription = bleManager.onStateChange((state) => {
-      setBleState(state);
-    }, true);
-    bleManager.state().then(setBleState).catch(() => {});
-    return () => {
-      if (permissionTimeoutRef.current) {
-        clearTimeout(permissionTimeoutRef.current);
-        permissionTimeoutRef.current = null;
-      }
-      bleManager.destroy();
-      subscription?.remove?.();
-      appStateSub?.remove?.();
-    };
-  }, [schedulePermissionRequest]);
-
-  const disconnect = async (slot = 'primary') => {
-    const target = slot === 'primary' ? connectedDevice : secondaryDevice;
-    if (!target) return;
-    try {
-      if (slot === 'primary') {
-        ['ROM', 'TUT', 'Velocity', 'Current Position', 'reps', 'sets'].forEach((label) => {
-          try {
-            bleManager.cancelTransaction(`workoutstream-${label}`);
-          } catch {}
-        });
-      }
-      await bleManager.cancelDeviceConnection(target.id);
-    } catch (e) {
-      console.warn('Disconnect error', e?.message || e);
-    } finally {
-      if (slot === 'primary') {
-        setConDev(null);
-      } else {
-        setSecondaryDevice(null);
-      }
-    }
-  };
   const handleWorkoutSelection = (workout) => {
     setSelectedWorkout(workout);
     setPendingWorkout(workout);
@@ -565,6 +657,63 @@ const [secondaryFeedback, setSecondaryFeedback] = useState({ ROM: 0 });
     setPendingWorkout(null);
   };
 
+  const commandForDeviceSlot = (command, slot = 'primary') => {
+    const bytes = normalizeCommandBytes(command);
+    if (bytes[0] !== DeviceCommands.start || bytes.length < 2) {
+      return command;
+    }
+    const settings = deviceSettings?.[slot] || {};
+    return createCommand(DeviceCommands.start, {
+      exerciseType: bytes[1],
+      limb: settings.limb ?? ExerciseLimb.undefined.value,
+      side: settings.side ?? ExerciseSide.both.value,
+    });
+  };
+
+  const sendWorkoutCommandToConnectedDevices = async ({ primaryCommand, secondaryCommand = null }) => {
+    if (!connectedDevice && !secondaryDevice) {
+      Alert.alert('Not connected', 'Connect at least one device first.');
+      return;
+    }
+
+    const primaryBytes = primaryCommand ? normalizeCommandBytes(primaryCommand) : [];
+    const secondaryBytes = secondaryCommand ? normalizeCommandBytes(secondaryCommand) : [];
+    const allCommandBytes = [primaryBytes, secondaryBytes].filter((bytes) => bytes.length);
+    const isStartBroadcast = allCommandBytes.some((bytes) => bytes[0] === DeviceCommands.start);
+    const isStopBroadcast = allCommandBytes.some((bytes) => bytes[0] === DeviceCommands.stop);
+
+    console.log('BLE workout command broadcast', {
+      primaryDeviceId: connectedDevice?.id || null,
+      secondaryDeviceId: secondaryDevice?.id || null,
+      primaryBytes: primaryBytes.length ? primaryBytes : null,
+      secondaryBytes: secondaryBytes.length ? secondaryBytes : null,
+    });
+
+    if (connectedDevice && primaryCommand) {
+      await sendCommand(primaryCommand, connectedDevice, 'primary');
+    }
+
+    const commandForSecondary = secondaryCommand || primaryCommand;
+    if (secondaryDevice && commandForSecondary) {
+      await delay(SECONDARY_COMMAND_DELAY_MS);
+      await sendCommand(commandForSecondary, secondaryDevice, 'secondary');
+    } else if (!secondaryDevice) {
+      console.log('BLE workout command broadcast skipped secondary device', {
+        reason: 'secondary device not connected',
+      });
+    }
+
+    if (isStartBroadcast) {
+      setCountdownSeconds(COUNTDOWN_SECONDS);
+      setWorkoutPhase('countdown');
+    }
+    if (isStopBroadcast) {
+      setCountdownSeconds(COUNTDOWN_SECONDS);
+      setWorkoutPhase('idle');
+    }
+  };
+
+
   const startWorkoutCommand = async () => {
     const key = pendingWorkout || selectedWorkout;
     const config = WORKOUT_COMMANDS[key];
@@ -572,198 +721,51 @@ const [secondaryFeedback, setSecondaryFeedback] = useState({ ROM: 0 });
       closeReadyModal();
       return;
     }
+    const sharedCommand = config.command ? commandForDeviceSlot(config.command, 'primary') : null;
     try {
-      if (config.command) {
-        await sendCommand(config.command);
-      }
-      if (config.secondaryCommand && secondaryDevice) {
-        await sendCommand(config.secondaryCommand, secondaryDevice);
-      }
+      await sendWorkoutCommandToConnectedDevices({
+        primaryCommand: sharedCommand,
+        secondaryCommand: sharedCommand,
+      });
     } finally {
       closeReadyModal();
     }
   };
-
-  const scanAndConnect = (slot = 'primary') => {
-    setDeviceSlotToConnect(slot);
-    if (bleState && bleState !== 'PoweredOn') {
-      Alert.alert(
-        'Bluetooth Off',
-        'Please enable Bluetooth to connect to a device.'
-      );
-      return;
-    }
-    bleManager.stopDeviceScan();
-    setScannedDevices([]);
-    setShowDeviceModal(true);
-    setConnecting(true);
-
-    bleManager.startDeviceScan(null, null, (error, device) => {
-      if (error) {
-        setConnecting(false);
-        setShowDeviceModal(false);
-        Alert.alert('Scan Error', error.message || 'Unable to scan for BLE devices.');
-        return;
-      }
-
-      if (!device?.id) {
-        return;
-      }
-
-      const name = (device.name || '').toLowerCase();
-      if (!name.startsWith('bplx')) return;
-
-      setScannedDevices((prev) => {
-        if (prev.some((d) => d.id === device.id)) {
-          return prev;
-        }
-        return [...prev, device];
-      });
-    });
-
-    setTimeout(() => {
-      bleManager.stopDeviceScan();
-      setConnecting(false);
-    }, 10000);
-  };
-
-  const readCurrentPosition = async (dev = null) => {
-    const device = dev || connectedDevice;
-    if (!device) return;
-    try {
-      const ch = await device.readCharacteristicForService(
-        SERVICE_UUIDS.deviceStatus,
-        CHARACTERISTICS.currentPosition
-      );
-      const raw = base64.decode(ch.value || '');
-      const buf = Uint8Array.from(raw.split('').map((c) => c.charCodeAt(0)));
-      const v = buf[0] ?? 0;
-      setFeedback((prev) => ({ ...prev, 'Current Position': v }));
-    } catch (e) {
-      console.warn('Read current position failed:', e?.message || e);
-    }
-  };
-
-  const connectDevice = async (device, slot = 'primary') => {
-    try {
-      setConnecting(true);
-      const connected = await device.connect();
-      const ready = await connected.discoverAllServicesAndCharacteristics();
-      bleManager.onDeviceDisconnected(ready.id, () => {
-        console.log('Device disconnected');
-        if (slot === 'primary') {
-          setConDev(null);
-        } else {
-          setSecondaryDevice(null);
-        }
-      });
-      if (slot === 'primary') {
-        setConDev(ready);
-        monitor(ready, 'primary');
-        await readCurrentPosition(ready);
-      } else {
-        setSecondaryDevice(ready);
-        monitor(ready, 'secondary');
-      }
-      const roleLabel = slot === 'primary' ? '' : ' (secondary)';
-      Alert.alert('Connected', `Connected to ${device.name || 'device'}${roleLabel}`);
-    } catch (e) {
-      Alert.alert('Connect error', e.message);
-    } finally {
-      setConnecting(false);
-      setShowDeviceModal(false);
-      bleManager.stopDeviceScan();
-    }
-  };
-
-  const handleDeviceSelect = (device) => {
-    if (!device) return;
-    connectDevice(device, deviceSlotToConnect);
-  };
-
-  const monitor = (device, slot = 'primary') => {
-    const watch = (svc, chr, label, fmt) => {
-      const transactionId = `workoutstream-${slot}-${label}`;
-      device.monitorCharacteristicForService(
-        svc,
-        chr,
-        (err, characteristic) => {
-          if (err) return console.warn(err);
-          const raw = base64.decode(characteristic.value || '');
-          const buf = Uint8Array.from(raw.split('').map((c) => c.charCodeAt(0)));
-          let value = 0;
-          if (fmt === 'UINT8') value = buf[0] ?? 0;
-          if (fmt === 'UINT16') value = (buf[0] ?? 0) + ((buf[1] ?? 0) << 8);
-          if (fmt === 'UINT32') {
-            value =
-              (buf[0] ?? 0) +
-              ((buf[1] ?? 0) << 8) +
-              ((buf[2] ?? 0) << 16) +
-              ((buf[3] ?? 0) << 24);
-          }
-          if (slot === 'secondary' && label === 'ROM') {
-            setSecondaryFeedback((prev) => ({ ...prev, ROM: value }));
-          } else {
-            setFeedback((prev) => {
-              const next = { ...prev };
-              if (label === 'Velocity') next.Velocity = +((value / 100).toFixed(2));
-              if (label === 'TUT') next.TUT = +((value / 1000).toFixed(2));
-              if (label === 'ROM') next.ROM = value;
-              if (label === 'Current Position') next['Current Position'] = value;
-              if (label === 'reps') next.reps = value;
-              if (label === 'sets') next.sets = value;
-              if (label === 'ROM') next.Score = value > 120 ? 100 : value > 90 ? 50 : 0;
-              return next;
-            });
-          }
-        },
-        transactionId
-      );
-    };
-
-    watch(SERVICE_UUIDS.deviceStatus, CHARACTERISTICS.rom, 'ROM', 'UINT8');
-    watch(SERVICE_UUIDS.deviceStatus, CHARACTERISTICS.tut, 'TUT', 'UINT32');
-    watch(SERVICE_UUIDS.deviceStatus, CHARACTERISTICS.velocity, 'Velocity', 'UINT16');
-    watch(SERVICE_UUIDS.deviceStatus, CHARACTERISTICS.currentPosition, 'Current Position', 'UINT8');
-    watch(SERVICE_UUIDS.deviceStatus, CHARACTERISTICS.reps, 'reps', 'UINT16');
-    watch(SERVICE_UUIDS.deviceStatus, CHARACTERISTICS.sets, 'sets', 'UINT8');
-  };
-
-  const sendCommand = async (custom = null, targetDevice = null) => {
+  const sendCommand = async (custom = null, targetDevice = null, targetSlot = 'primary') => {
     const device = targetDevice || connectedDevice;
     if (!device) {
       Alert.alert('Not connected', 'Connect to a device first.');
       return;
     }
 
-    const cmd = (custom !== null ? custom : inputValue).trim();
-    if (!cmd) {
+    const command = custom !== null ? custom : inputValue;
+    const bytes = normalizeCommandBytes(command);
+    if (!bytes.length) {
       Alert.alert('No command', 'Enter comma separated bytes.');
       return;
     }
 
-    const bytes = cmd.split(',').map((n) => parseInt(n.trim(), 10));
     if (bytes.some((n) => Number.isNaN(n))) {
       Alert.alert('Invalid command', 'Ensure all entries are numbers.');
       return;
     }
 
-    if (bytes[0] === 4 && bytes.length > 1) {
+    if (bytes[0] === DeviceCommands.start && bytes.length > 1) {
       const romMap = {
-        0: 125,
-        1: 90,
-        2: 90,
-        3: 90,
-        4: 90,
-        5: 70,
-        6: 90,
-        7: 30,
-        8: 105,
-        9: 90,
-        10: 135,
-        11: 53,
-        12: 90,
-        13: 90,
+        [ExerciseType.barbellBench.value]: 125,
+        [ExerciseType.benchDips.value]: 90,
+        [ExerciseType.lateralRaise.value]: 90,
+        [ExerciseType.dumbellRow.value]: 90,
+        [ExerciseType.overheadPress.value]: 90,
+        [ExerciseType.pushUp.value]: 70,
+        [ExerciseType.airSquat.value]: 90,
+        [ExerciseType.barbellDeadlift.value]: 30,
+        [ExerciseType.barbellSquat.value]: 105,
+        [ExerciseType.dumbellLunge.value]: 90,
+        [ExerciseType.layingLegRaise.value]: 135,
+        [ExerciseType.mountainClimbers.value]: 53,
+        [ExerciseType.squatAndPressUpper.value]: 90,
+        [ExerciseType.squatAndPressLower.value]: 90,
       };
       const newMax = romMap[bytes[1]];
       if (newMax !== undefined) {
@@ -772,21 +774,27 @@ const [secondaryFeedback, setSecondaryFeedback] = useState({ ROM: 0 });
     }
 
     const payload = base64.encode(String.fromCharCode(...bytes));
+    console.log('BLE command write', {
+      deviceId: device.id,
+      deviceName: device.name || null,
+      bytes,
+      base64: payload,
+    });
     try {
       await device.writeCharacteristicWithResponseForService(
-        SERVICE_UUIDS.command,
-        CHARACTERISTICS.command,
+        BleUuids.deviceCommandService,
+        BleUuids.command,
         payload
       );
     } catch {
       await device.writeCharacteristicWithoutResponseForService(
-        SERVICE_UUIDS.command,
-        CHARACTERISTICS.command,
+        BleUuids.deviceCommandService,
+        BleUuids.command,
         payload
       );
     }
 
-    if (device === connectedDevice) {
+    if (targetSlot === 'primary') {
       readCurrentPosition();
     }
     Keyboard.dismiss();
@@ -853,6 +861,45 @@ const [secondaryFeedback, setSecondaryFeedback] = useState({ ROM: 0 });
     }
   }, [feedback.reps, persistRepSnapshot]);
 
+  //  useEffect(() => {
+  //   const sets = feedback.sets;
+  //   if (sets < (prevSetsRef.current ?? 0)) {
+  //     prevSetsRef.current = sets;
+  //     return;
+  //   }
+  //   if (sets > 0 && sets !== prevSetsRef.current && repSnapshots.length > 0) {
+  //     const arr = [...repSnapshots];
+  //     const now = new Date();
+  //     const summaryObj = {
+  //       SetNumber: sets,
+  //       RepsCompleted: arr.length,
+  //       Score: +average(arr.map((r) => r.Score)).toFixed(2),
+  //       ScoreSeries: arr.map((r, index) => ({
+  //         key: `score-${index + 1}`,
+  //         label: `${index + 1}`,
+  //         value: Number(r.Score) || 0,
+  //       })),
+  //       Momentum: +sum(arr.map((r) => r.Momentum)).toFixed(2),
+  //       TUT: +average(arr.map((r) => r.TUT)).toFixed(2),
+  //       Velocity: +average(arr.map((r) => r.Velocity)).toFixed(2),
+  //       ROM: +average(arr.map((r) => r.ROM)).toFixed(2),
+  //       Date: now.toISOString().split('T')[0],
+  //       Time: now.toLocaleTimeString(),
+  //     };
+  //     const setNoValue = arr[0]?.setNo || sets || 1;
+  //     const workoutValue = arr[0]?.workout || workoutRef.current;
+  //     const weightValue = arr[0]?.weight ?? weightRef.current;
+  //     persistSet({ workout: workoutValue, setNo: setNoValue, weight: weightValue });
+  //     setSummary(summaryObj);
+  //     setSummaryModalVisible(true);
+  //     setRepSnapshots([]);
+  //     prevSetsRef.current = sets;
+  //     prevRepsRef.current = 0;
+  //   }
+  // }, [feedback.sets, repSnapshots, persistSet]);
+
+
+
   useEffect(() => {
     const sets = feedback.sets;
     if (sets > 0 && sets !== prevSetsRef.current && repSnapshots.length > 0) {
@@ -862,6 +909,11 @@ const [secondaryFeedback, setSecondaryFeedback] = useState({ ROM: 0 });
         SetNumber: sets,
         RepsCompleted: arr.length,
         Score: +average(arr.map((r) => r.Score)).toFixed(2),
+        ScoreSeries: arr.map((r, index) => ({
+          key: `score-${index + 1}`,
+          label: `${index + 1}`,
+          value: Number(r.Score) || 0,
+        })),
         Momentum: +sum(arr.map((r) => r.Momentum)).toFixed(2),
         TUT: +average(arr.map((r) => r.TUT)).toFixed(2),
         Velocity: +average(arr.map((r) => r.Velocity)).toFixed(2),
@@ -880,6 +932,62 @@ const [secondaryFeedback, setSecondaryFeedback] = useState({ ROM: 0 });
       prevRepsRef.current = 0;
     }
   }, [feedback.sets, repSnapshots, persistSet]);
+  useEffect(() => {
+    let active = true;
+    const loadProfileWeight = async () => {
+      try {
+        const current = await getCurrentUser();
+        const user_id = current?.userId || current?.username;
+        if (!user_id) return;
+        const { data } = await client.graphql({
+          query: GET_USER_WEIGHT,
+          variables: { user_id },
+        });
+        const value = Number(data?.getUser?.current_weight);
+        if (active) {
+          setProfileWeight(Number.isFinite(value) ? value : null);
+        }
+      } catch (err) {
+        console.log('Fetch profile weight failed', err);
+      }
+    };
+    loadProfileWeight();
+    return () => {
+      active = false;
+    };
+  }, [client]);
+  useEffect(() => {
+    if (!BODYWEIGHT_WORKOUT_LABELS.has(selectedWorkout)) return;
+    if (!Number.isFinite(profileWeight)) return;
+    setWeight(profileWeight);
+  }, [profileWeight, selectedWorkout]);
+
+  useEffect(() => {
+    if (!connectedDevice && workoutPhase !== 'idle') {
+      setWorkoutPhase('idle');
+      setCountdownSeconds(COUNTDOWN_SECONDS);
+    }
+  }, [connectedDevice, workoutPhase]);
+
+  useEffect(() => {
+    if (workoutPhase !== 'countdown') return undefined;
+
+    if (!isUserStill) {
+      setCountdownSeconds(COUNTDOWN_SECONDS);
+      return undefined;
+    }
+
+    const timer = setTimeout(() => {
+      if (countdownSeconds <= 1) {
+        setCountdownSeconds(0);
+        setWorkoutPhase('active');
+        return;
+      }
+      setCountdownSeconds((prev) => prev - 1);
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [countdownSeconds, isUserStill, workoutPhase]);
 
   const updateRow = (id, key, value) => {
     setRows((prev) => prev.map((item) => (item.id === id ? { ...item, [key]: value } : item)));
@@ -902,7 +1010,7 @@ const [secondaryFeedback, setSecondaryFeedback] = useState({ ROM: 0 });
 
   const toInt = (value) => Math.round(toNumber(value));
 
-const CREATE_SESSION = /* GraphQL */ `
+  const CREATE_SESSION = /* GraphQL */ `
     mutation CreateSession($input: CreateSessionInput!) {
       createSession(input: $input) {
         session_id
@@ -910,7 +1018,7 @@ const CREATE_SESSION = /* GraphQL */ `
     }
   `;
 
-const CREATE_SESSION_ITEM = /* GraphQL */ `
+  const CREATE_SESSION_ITEM = /* GraphQL */ `
   mutation CreateSessionItem($input: CreateSessionItemInput!) {
     createSessionItem(input: $input) {
       session_id
@@ -919,7 +1027,7 @@ const CREATE_SESSION_ITEM = /* GraphQL */ `
   }
 `;
 
-const CREATE_SESSION_ITEM_REP = /* GraphQL */ `
+  const CREATE_SESSION_ITEM_REP = /* GraphQL */ `
     mutation CreateSessionItemRep($input: CreateSessionItemRepInput!) {
       createSessionItemRep(input: $input) {
         session_id
@@ -930,7 +1038,7 @@ const CREATE_SESSION_ITEM_REP = /* GraphQL */ `
     }
 `;
 
-const CREATE_SESSION_ITEM_SET = /* GraphQL */ `
+  const CREATE_SESSION_ITEM_SET = /* GraphQL */ `
   mutation CreateSessionItemSet($input: CreateSessionItemSetInput!) {
     createSessionItemSet(input: $input) {
       session_id
@@ -939,6 +1047,15 @@ const CREATE_SESSION_ITEM_SET = /* GraphQL */ `
     }
   }
 `;
+
+  //   const GET_USER_WEIGHT = /* GraphQL */ `
+  //   query GetUserWeight($user_id: ID!) {
+  //     getUser(user_id: $user_id) {
+  //       user_id
+  //       current_weight
+  //     }
+  //   }
+  // `;
 
   const resetSessionMaps = useCallback(() => {
     sessionItemIndexMap.current = {};
@@ -1044,7 +1161,7 @@ const CREATE_SESSION_ITEM_SET = /* GraphQL */ `
     [client, customerId, ensureSession, createSessionItemRecord]
   );
 
-const persistSet = useCallback(
+  const persistSet = useCallback(
     async ({ workout, setNo, weight }) => {
       const session_id = await ensureSession();
       if (!session_id) return;
@@ -1218,10 +1335,13 @@ const persistSet = useCallback(
     const currentEx = resolveExercise();
     const targetRomLeg = Number(currentEx?.target_rom_leg) || maxRom;
     const targetRomArm = Number(currentEx?.target_rom_arm) || maxRom;
+    const liveRomTarget = targetRomLeg || targetRomArm || maxRom;
     const romLegPct = targetRomLeg ? Math.round((feedback.ROM / targetRomLeg) * 100) : 0;
     const romArmPct = targetRomArm ? Math.round((secondaryFeedback.ROM / targetRomArm) * 100) : 0;
     const targetTut = Number(currentWorkoutItem?.target_tut) || maxTUT;
     const targetVelocity = Number(currentWorkoutItem?.target_velocity) || maxVelocity;
+    const liveTutTarget = targetTut || maxTUT;
+    const liveVelocityTarget = targetVelocity || maxVelocity;
     const tutPct = targetTut ? Math.round((feedback.TUT / targetTut) * 100) : 0;
     const velPct = targetVelocity ? Math.round((feedback.Velocity / targetVelocity) * 100) : 0;
     const romScorePct = targetRomLeg
@@ -1252,14 +1372,14 @@ const persistSet = useCallback(
       },
       secondaryDevice
         ? {
-            title: 'ROM (Arm)',
-            value: romArmPct,
-            rom: true,
-            display: secondaryFeedback.ROM,
-            decimals: 0,
-            info:
-              'ROM is the joint range of motion (degrees) from the arm sensor. It reflects form quality; higher ROM usually means better form. It also drives the overall rep score. Compared against target_rom_arm for this exercise.',
-          }
+          title: 'ROM (Arm)',
+          value: romArmPct,
+          rom: true,
+          display: secondaryFeedback.ROM,
+          decimals: 0,
+          info:
+            'ROM is the joint range of motion (degrees) from the arm sensor. It reflects form quality; higher ROM usually means better form. It also drives the overall rep score. Compared against target_rom_arm for this exercise.',
+        }
         : null,
       {
         title: 'TUT',
@@ -1281,10 +1401,99 @@ const persistSet = useCallback(
     ]
       .filter(Boolean)
       .map((item) => ({
-      ...item,
-      value: Number.isFinite(item.value) ? item.value : 0,
-    }));
+        ...item,
+        value: Number.isFinite(item.value) ? item.value : 0,
+      }));
     const maxAxis = Math.max(100, ...chartData.map((d) => d.value));
+    const formatValue = (value, decimals = 0) => {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric)) return '--';
+      return decimals > 0 ? numeric.toFixed(decimals) : String(numeric);
+    };
+    const liveChartWidth = Math.min(screenWidth - 56, 380);
+    const renderLiveTrendCard = ({ title, primaryPoints, secondaryPoints, target, decimals = 0, unitLabel }) => {
+      const latestPrimaryPoint = primaryPoints[primaryPoints.length - 1];
+      const latestSecondaryPoint = secondaryPoints[secondaryPoints?.length - 1];
+      const hasAnyPoints = primaryPoints.length || secondaryPoints?.length;
+
+      return (
+        <View style={styles.liveRomCard}>
+          <View style={styles.liveRomHeader}>
+            <Text style={styles.sectionLabel}>{title} Trend</Text>
+            <Text style={styles.liveRomHeaderText}>{activeWorkoutLabel || 'No workout selected'}</Text>
+          </View>
+          {hasAnyPoints ? (
+            <>
+              <View style={styles.liveRomStatsRow}>
+                <View style={styles.liveRomStatBox}>
+                  <Text style={styles.liveRomStatLabel}>Device 1</Text>
+                  <Text style={styles.liveRomStatValue}>{formatValue(latestPrimaryPoint?.value, decimals)}</Text>
+                  <Text style={styles.liveRomStatMeta}>{latestPrimaryPoint?.detailLabel || '--'}</Text>
+                </View>
+                <View style={styles.liveRomStatBox}>
+                  <Text style={styles.liveRomStatLabel}>Device 2</Text>
+                  <Text style={styles.liveRomStatValue}>{formatValue(latestSecondaryPoint?.value, decimals)}</Text>
+                  <Text style={styles.liveRomStatMeta}>{latestSecondaryPoint?.detailLabel || '--'}</Text>
+                </View>
+                <View style={styles.liveRomStatBox}>
+                  <Text style={styles.liveRomStatLabel}>Target</Text>
+                  <Text style={styles.liveRomStatValue}>{formatValue(target, decimals)}</Text>
+                  <Text style={styles.liveRomStatMeta}>{unitLabel}</Text>
+                </View>
+              </View>
+              <View style={styles.liveRomLegendRow}>
+                <View style={styles.liveRomLegendItem}>
+                  <View style={[styles.liveRomLegendDot, { backgroundColor: '#2563eb' }]} />
+                  <Text style={styles.liveRomLegendText}>Device 1</Text>
+                </View>
+                <View style={styles.liveRomLegendItem}>
+                  <View style={[styles.liveRomLegendDot, { backgroundColor: '#f97316' }]} />
+                  <Text style={styles.liveRomLegendText}>Device 2</Text>
+                </View>
+              </View>
+              <View style={styles.liveRomChartWrap}>
+                <MetricTrendLineChart
+                  series={[
+                    { name: 'Device 1', color: '#2563eb', points: primaryPoints },
+                    { name: 'Device 2', color: '#f97316', points: secondaryPoints },
+                  ]}
+                  width={liveChartWidth}
+                  target={target}
+                />
+              </View>
+              <Text style={styles.liveRomCaption}>Updates after each completed rep result.</Text>
+            </>
+          ) : (
+            <Text style={styles.muted}>The {title.toLowerCase()} graph will populate here after each completed rep.</Text>
+          )}
+        </View>
+      );
+    };
+    const renderMetricList = (title, data, isConnected) => {
+      const rows = [
+        ['Current Position', formatValue(data?.['Current Position'])],
+        ['Exercise Stage', `${formatValue(data?.exerciseStage)} (${exerciseStageFromValue(data?.exerciseStage)})`],
+        ['ROM', formatValue(data?.ROM)],
+        ['TUT', formatValue(data?.TUT, 2)],
+        ['Velocity', formatValue(data?.Velocity, 2)],
+        ['Reps', formatValue(data?.reps)],
+        ['Set Complete', formatValue(data?.setc ?? data?.sets)],
+      ];
+
+      return (
+        <View style={styles.metricsList}>
+          <Text style={styles.metricsListTitle}>
+            {title}: {isConnected ? 'Connected' : 'Not connected'}
+          </Text>
+          {rows.map(([label, value]) => (
+            <View key={`${title}-${label}`} style={styles.metricsListRow}>
+              <Text style={styles.metricsListLabel}>{label}</Text>
+              <Text style={styles.metricsListValue}>{isConnected ? value : '--'}</Text>
+            </View>
+          ))}
+        </View>
+      );
+    };
 
     return (
       <View style={styles.listHeader}>
@@ -1316,166 +1525,183 @@ const persistSet = useCallback(
 
         <View style={styles.sectionRow}>
           <Text style={styles.sectionLabel}>
-            Leg Sensor: {connectedDevice ? connectedDevice.name || connectedDevice.id : 'Not connected'}
+            Device 1: {connectedDevice ? connectedDevice.name || connectedDevice.id : 'Not connected'}
           </Text>
-          {connectedDevice ? (
-            <Pressable style={[styles.sensorButton, styles.sensorButtonDanger]} onPress={() => disconnect('primary')}>
-              <Text style={styles.sensorButtonText}>Disconnect</Text>
-            </Pressable>
-          ) : (
-            <Pressable
-              style={[styles.sensorButton, connecting && styles.sensorButtonDisabled]}
-              disabled={connecting}
-              onPress={() => scanAndConnect('primary')}
-            >
-              <Text style={[styles.sensorButtonText, connecting && styles.sensorButtonTextDisabled]}>
-                {connecting ? 'Connecting...' : 'Connect Leg Sensor'}
-              </Text>
-            </Pressable>
-          )}
         </View>
         <View style={styles.sectionRow}>
           <Text style={styles.sectionLabel}>
-            Arm Sensor: {secondaryDevice ? secondaryDevice.name || secondaryDevice.id : 'Not connected'}
+            Device 2: {secondaryDevice ? secondaryDevice.name || secondaryDevice.id : 'Not connected'}
           </Text>
-          {secondaryDevice ? (
-            <Pressable
-              style={[styles.sensorButton, styles.sensorButtonDanger]}
-              onPress={() => disconnect('secondary')}
-            >
-              <Text style={styles.sensorButtonText}>Disconnect</Text>
-            </Pressable>
-          ) : (
-            <Pressable
-              style={[styles.sensorButton, connecting && styles.sensorButtonDisabled]}
-              disabled={connecting}
-              onPress={() => scanAndConnect('secondary')}
-            >
-              <Text style={[styles.sensorButtonText, connecting && styles.sensorButtonTextDisabled]}>
-                {connecting ? 'Connecting...' : 'Connect Arm Sensor'}
-              </Text>
-            </Pressable>
-          )}
+        </View>
+        {!connectedDevice ? (
+          <Text style={styles.muted}>Connect sensors from the Home screen before starting.</Text>
+        ) : null}
+
+        <View style={styles.selectionCard}>
+          <Pressable
+            style={styles.selectionHeader}
+            onPress={() => setExerciseSelectionExpanded((prev) => !prev)}
+          >
+            <View>
+              <Text style={styles.selectionTitle}>Exercise Selection</Text>
+              <Text style={styles.selectionSubtitle}>{selectedWorkout || 'No exercise selected'}</Text>
+            </View>
+            <Text style={styles.selectionToggle}>{exerciseSelectionExpanded ? 'Hide' : 'Show'}</Text>
+          </Pressable>
+          {exerciseSelectionExpanded ? (
+            <View style={styles.chipRow}>
+              {workoutOptions.map((opt) => (
+                <Pressable
+                  key={opt}
+                  onPress={() => handleWorkoutSelection(opt)}
+                  style={[styles.chip, selectedWorkout === opt && styles.chipSelected]}
+                >
+                  <Text style={{ color: selectedWorkout === opt ? '#fff' : '#333' }}>{opt}</Text>
+                </Pressable>
+              ))}
+            </View>
+          ) : null}
         </View>
 
-        <View style={styles.chipRow}>
-          {workoutOptions.map((opt) => (
-            <Pressable
-              key={opt}
-              onPress={() => handleWorkoutSelection(opt)}
-              style={[styles.chip, selectedWorkout === opt && styles.chipSelected]}
-            >
-              <Text style={{ color: selectedWorkout === opt ? '#fff' : '#333' }}>{opt}</Text>
-            </Pressable>
-          ))}
-        </View>
-
-        <View style={styles.repSetRow}>
-          <View style={styles.repSetBox}>
-            <Text style={styles.repSetLabel}>Current Rep</Text>
-            <Text style={styles.repSetValue}>{feedback.reps ?? 0}</Text>
-          </View>
-          <View style={styles.repSetBox}>
-            <Text style={styles.repSetLabel}>Current Set</Text>
-            <Text style={styles.repSetValue}>{feedback.sets ?? 0}</Text>
-          </View>
-        </View>
-
-        <View style={styles.chartWrap}>
-          <IntensityBars data={chartData} onInfo={handleInfo} />
-        </View>
-        <View style={{ marginTop: 12 }}>
-          <Text style={styles.sectionLabel}>Rep Momentum</Text>
-          {repSnapshots.length ? (
-            (() => {
-              const last = repSnapshots[repSnapshots.length - 1] || {};
-              const prev = repSnapshots[repSnapshots.length - 2] || null;
-              const currentVal = Number(last?.Momentum) || 0;
-              const prevVal = prev ? Number(prev.Momentum) || 0 : null;
-              let changeText = '—';
-              let changeColor = '#334155';
-              let arrow = '';
-              if (prevVal !== null && prevVal !== 0) {
-                const delta = ((currentVal - prevVal) / Math.abs(prevVal)) * 100;
-                if (delta > 0) {
-                  arrow = '▲';
-                  changeColor = '#16a34a';
-                } else if (delta < 0) {
-                  arrow = '▼';
-                  changeColor = '#dc2626';
+        {/* <View style={styles.metricsListWrap}>
+          {renderMetricList('Device 1', feedback, !!connectedDevice)}
+          {renderMetricList('Device 2', secondaryFeedback, !!secondaryDevice)}
+        </View> */}
+        <>
+          <View style={{ marginTop: 12 }}>
+            <Text style={styles.sectionLabel}>Rep Momentum</Text>
+            {repSnapshots.length ? (
+              (() => {
+                const last = repSnapshots[repSnapshots.length - 1] || {};
+                const prev = repSnapshots[repSnapshots.length - 2] || null;
+                const currentVal = Number(last?.Momentum) || 0;
+                const prevVal = prev ? Number(prev.Momentum) || 0 : null;
+                let changeText = '—';
+                let changeColor = '#334155';
+                let arrow = '';
+                if (prevVal !== null && prevVal !== 0) {
+                  const delta = ((currentVal - prevVal) / Math.abs(prevVal)) * 100;
+                  if (delta > 0) {
+                    arrow = '▲';
+                    changeColor = '#16a34a';
+                  } else if (delta < 0) {
+                    arrow = '▼';
+                    changeColor = '#dc2626';
+                  }
+                  changeText = `${delta > 0 ? '+' : ''}${delta.toFixed(1)}%`;
                 }
-                changeText = `${delta > 0 ? '+' : ''}${delta.toFixed(1)}%`;
-              }
-              return (
-                <View style={styles.momentumValueWrap}>
-                  <Text style={styles.momentumValueMain}>{currentVal.toFixed(0)}</Text>
-                  <View style={styles.momentumChangeRow}>
-                    <Text style={[styles.momentumChange, { color: changeColor }]}>{arrow} {changeText}</Text>
+                return (
+                  <View style={styles.momentumValueWrap}>
+                    <Text style={styles.momentumValueMain}>{currentVal.toFixed(0)}</Text>
+                    <View style={styles.momentumChangeRow}>
+                      <Text style={[styles.momentumChange, { color: changeColor }]}>{arrow} {changeText}</Text>
+                    </View>
+                  </View>
+                );
+              })()
+            ) : (
+              <Text style={styles.muted}>No rep momentum recorded yet.</Text>
+            )}
+          </View>
+
+          <View style={styles.selectionCard}>
+            <Pressable
+              style={styles.selectionHeader}
+              onPress={() => setTrainingSettingsExpanded((prev) => !prev)}
+            >
+              <View>
+                <Text style={styles.selectionTitle}>Workout Settings</Text>
+                <Text style={styles.selectionSubtitle}>
+                  Weight {weight.toFixed(1)} lbs
+                  {showManualTargets ? ` · TUT ${maxTUT}s · Velocity ${maxVelocity} m/s` : ''}
+                </Text>
+              </View>
+              <Text style={styles.selectionToggle}>{trainingSettingsExpanded ? 'Hide' : 'Show'}</Text>
+            </Pressable>
+            {trainingSettingsExpanded ? (
+              <>
+                <View style={styles.weightRow}>
+                  <Text style={styles.sectionLabel}>Weight Lifted</Text>
+                  <Text style={styles.weightValue}>{weight.toFixed(1)} lbs</Text>
+                  <View style={styles.loadGrid}>
+                    {LOAD_OPTIONS.map((amount) => (
+                      <View style={styles.loadRow} key={amount}>
+                        <TouchableOpacity
+                          style={styles.loadButton}
+                          onPress={() => adjustWeight(-amount)}
+                        >
+                          <Text style={styles.loadButtonText}>-</Text>
+                        </TouchableOpacity>
+                        <Text style={styles.loadValue}>{amount} lbs</Text>
+                        <TouchableOpacity style={styles.loadButton} onPress={() => adjustWeight(amount)}>
+                          <Text style={styles.loadButtonText}>+</Text>
+                        </TouchableOpacity>
+                      </View>
+                    ))}
                   </View>
                 </View>
-              );
-            })()
-          ) : (
-            <Text style={styles.muted}>No rep momentum recorded yet.</Text>
-          )}
-        </View>
 
-        <View style={styles.weightRow}>
-          <Text style={styles.sectionLabel}>Weight Lifted</Text>
-          <Text style={styles.weightValue}>{weight.toFixed(1)} lbs</Text>
-          <View style={styles.loadGrid}>
-            {LOAD_OPTIONS.map((amount) => (
-              <View style={styles.loadRow} key={amount}>
-                <TouchableOpacity
-                  style={styles.loadButton}
-                  onPress={() => adjustWeight(-amount)}
-                >
-                  <Text style={styles.loadButtonText}>-</Text>
-                </TouchableOpacity>
-                <Text style={styles.loadValue}>{amount} lbs</Text>
-                <TouchableOpacity style={styles.loadButton} onPress={() => adjustWeight(amount)}>
-                  <Text style={styles.loadButtonText}>+</Text>
-                </TouchableOpacity>
-              </View>
-            ))}
+                {showManualTargets && (
+                  <>
+                    <View style={styles.section}>
+                      <Text style={styles.sectionLabel}>Max TUT (s)</Text>
+                      <View style={styles.chipRow}>
+                        {tutOptions.map((opt, idx) => (
+                          <Pressable
+                            key={opt.label}
+                            onPress={() => setTutLevel(idx)}
+                            style={[styles.chip, tutLevel === idx && styles.chipSelected]}
+                          >
+                            <Text style={{ color: tutLevel === idx ? '#fff' : '#333' }}>{opt.label}</Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    </View>
+
+                    <View style={styles.section}>
+                      <Text style={styles.sectionLabel}>Max Velocity (m/s)</Text>
+                      <View style={styles.chipRow}>
+                        {velOptions.map((opt, idx) => (
+                          <Pressable
+                            key={opt.label}
+                            onPress={() => setVelLevel(idx)}
+                            style={[styles.chip, velLevel === idx && styles.chipSelected]}
+                          >
+                            <Text style={{ color: velLevel === idx ? '#fff' : '#333' }}>{opt.label}</Text>
+                          </Pressable>
+                        ))}
+                      </View>
+                    </View>
+                  </>
+                )}
+              </>
+            ) : null}
           </View>
-        </View>
 
-        {showManualTargets && (
-          <>
-            <View style={styles.section}>
-              <Text style={styles.sectionLabel}>Max TUT (s)</Text>
-              <View style={styles.chipRow}>
-                {tutOptions.map((opt, idx) => (
-                  <Pressable
-                    key={opt.label}
-                    onPress={() => setTutLevel(idx)}
-                    style={[styles.chip, tutLevel === idx && styles.chipSelected]}
-                  >
-                    <Text style={{ color: tutLevel === idx ? '#fff' : '#333' }}>{opt.label}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-
-            <View style={styles.section}>
-              <Text style={styles.sectionLabel}>Max Velocity (m/s)</Text>
-              <View style={styles.chipRow}>
-                {velOptions.map((opt, idx) => (
-                  <Pressable
-                    key={opt.label}
-                    onPress={() => setVelLevel(idx)}
-                    style={[styles.chip, velLevel === idx && styles.chipSelected]}
-                  >
-                    <Text style={{ color: velLevel === idx ? '#fff' : '#333' }}>{opt.label}</Text>
-                  </Pressable>
-                ))}
-              </View>
-            </View>
-          </>
-        )}
-
-        {/* <View style={styles.metricsRow}>
+          {renderLiveTrendCard({
+            title: 'ROM',
+            primaryPoints: liveRomPoints,
+            secondaryPoints: liveSecondaryRomPoints,
+            target: liveRomTarget,
+            unitLabel: 'Degrees',
+          })}
+          {renderLiveTrendCard({
+            title: 'TUT',
+            primaryPoints: liveTutPoints,
+            secondaryPoints: liveSecondaryTutPoints,
+            target: liveTutTarget,
+            decimals: 2,
+            unitLabel: 'Seconds',
+          })}
+          {renderLiveTrendCard({
+            title: 'Velocity',
+            primaryPoints: liveVelocityPoints,
+            secondaryPoints: liveSecondaryVelocityPoints,
+            target: liveVelocityTarget,
+            decimals: 2,
+            unitLabel: 'm/s',
+          })}
+          {/* <View style={styles.metricsRow}>
           {Object.entries(feedback).map(([label, value]) => (
             <View key={label} style={styles.metric}>
               <Text style={styles.metricLabel}>{label}</Text>
@@ -1483,7 +1709,7 @@ const persistSet = useCallback(
             </View>
           ))}
         </View> */}
-
+        </>
 
         {connectedDevice && (
           <>
@@ -1497,7 +1723,16 @@ const persistSet = useCallback(
             /> */}
             {/* <Button title="Send Command" onPress={() => sendCommand()} /> */}
             <View style={{ marginTop: 12 }}>
-              <Button title="End Workout" color="#FF4136" onPress={() => sendCommand('5,0')} />
+              <Button
+                title="End Workout"
+                color="#FF4136"
+                onPress={() =>
+                  sendWorkoutCommandToConnectedDevices({
+                    primaryCommand: createCommand(DeviceCommands.stop),
+                    secondaryCommand: createCommand(DeviceCommands.stop),
+                  })
+                }
+              />
             </View>
           </>
         )}
@@ -1507,7 +1742,7 @@ const persistSet = useCallback(
   };
 
   const SummaryTable = () => {
-    const grouped = rows.reduce((acc, row) => {
+    const grouped = rows?.reduce((acc, row) => {
       const workout = row.workout || 'Unknown';
       const setNo = row.setNo && String(row.setNo).trim() !== '' ? String(row.setNo).trim() : '1';
       const key = `${workout}||${setNo}`;
@@ -1572,6 +1807,56 @@ const persistSet = useCallback(
             <Text style={styles.infoTitle}>{infoModal.title}</Text>
             <Text style={styles.infoText}>{infoModal.text}</Text>
             <Button title="Close" onPress={() => setInfoModal({ visible: false, title: '', text: '' })} />
+          </View>
+        </View>
+      </Modal>
+
+      <Modal visible={workoutPhase === 'countdown'} transparent animationType="fade">
+        <View style={styles.countdownOverlay}>
+          <View style={styles.countdownCard}>
+            <Text style={styles.countdownTitle}>{countdownWorkoutLabel}</Text>
+            <Text
+              style={[
+                styles.countdownTopText,
+                isUserStill ? styles.countdownTopTextIdle : styles.countdownTopTextWarn,
+              ]}
+            >
+              {isUserStill ? 'Starting in' : 'Hold still...'}
+            </Text>
+            <View
+              style={[
+                styles.countdownCircle,
+                isUserStill ? styles.countdownCircleIdle : styles.countdownCircleWarn,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.countdownNumber,
+                  isUserStill ? styles.countdownNumberIdle : styles.countdownNumberWarn,
+                ]}
+              >
+                {countdownSeconds}
+              </Text>
+            </View>
+            <Text style={styles.countdownHint}>
+              Assume your starting position and stay still until the countdown finishes.
+            </Text>
+            <View style={styles.countdownStatusRow}>
+              <View
+                style={[
+                  styles.countdownStatusDot,
+                  isUserStill ? styles.countdownStatusDotIdle : styles.countdownStatusDotWarn,
+                ]}
+              />
+              <Text
+                style={[
+                  styles.countdownStatusText,
+                  isUserStill ? styles.countdownStatusTextIdle : styles.countdownStatusTextWarn,
+                ]}
+              >
+                {countdownStatusLabel}
+              </Text>
+            </View>
           </View>
         </View>
       </Modal>
@@ -1655,6 +1940,22 @@ const persistSet = useCallback(
                   ]}
                   onInfo={handleInfo}
                 />
+                {summary.ScoreSeries?.length ? (
+                  <View style={[styles.liveRomCard, { marginTop: 12, marginBottom: 12 }]}>
+                    <View style={styles.liveRomHeader}>
+                      <Text style={styles.sectionLabel}>Score Trend</Text>
+                      <Text style={styles.liveRomHeaderText}>Rep by rep</Text>
+                    </View>
+                    <View style={styles.liveRomChartWrap}>
+                      <MetricTrendLineChart
+                        series={[{ name: 'Score', color: '#16a34a', points: summary.ScoreSeries }]}
+                        width={Math.min(screenWidth - 96, 320)}
+                        target={100}
+                        height={170}
+                      />
+                    </View>
+                  </View>
+                ) : null}
                 {[
                   ['Sets', summary.SetNumber],
                   ['Reps', summary.RepsCompleted],
@@ -1676,45 +1977,87 @@ const persistSet = useCallback(
         </View>
       </Modal>
 
-        <Modal visible={showDeviceModal} transparent animationType="slide">
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalCard}>
-              <Text style={styles.modalTitle}>
-                {deviceSlotToConnect === 'secondary'
-                  ? 'Select a Secondary Device to Connect'
-                  : 'Select a Device to Connect'}
-              </Text>
-              {connecting ? (
-                <Text style={{ marginBottom: 16 }}>Scanning for nearby Bluetooth devices...</Text>
-              ) : scannedDevices.length === 0 ? (
-                <Text style={{ marginBottom: 16 }}>No devices found. Try scanning again.</Text>
-              ) : null}
-              <FlatList
-                style={{ maxHeight: 200, width: '100%' }}
-                data={scannedDevices}
-                keyExtractor={(item) => item.id}
-                renderItem={({ item }) => (
-                  <TouchableOpacity
-                    onPress={() => handleDeviceSelect(item)}
-                    style={{ padding: 14 }}
-                  >
-                    <Text style={{ fontSize: 17 }}>{item.name || 'Unnamed device'}</Text>
-                    <Text style={{ fontSize: 12, color: '#666' }}>{item.id}</Text>
-                  </TouchableOpacity>
-                )}
-              />
-              <Button
-                title="Cancel"
-                onPress={() => {
-                  bleManager.stopDeviceScan();
-                  setShowDeviceModal(false);
-                  setConnecting(false);
-                }}
-              />
-            </View>
-          </View>
-        </Modal>
     </KeyboardAvoidingView>
+  );
+}
+
+function MetricTrendLineChart({ series = [], width = screenWidth - 56, height = 190, target = 120 }) {
+  const usableSeries = series
+    .map((entry) => ({
+      ...entry,
+      points: (entry.points || []).filter((point) => Number.isFinite(point.value)),
+    }))
+    .filter((entry) => entry.points.length);
+  if (!usableSeries.length) return null;
+
+  const padding = { top: 18, right: 14, bottom: 34, left: 34 };
+  const chartWidth = Math.max(1, width - padding.left - padding.right);
+  const chartHeight = Math.max(1, height - padding.top - padding.bottom);
+  const allValues = usableSeries.flatMap((entry) => entry.points.map((point) => point.value));
+  const maxPointCount = Math.max(...usableSeries.map((entry) => entry.points.length));
+  const axisMax = Math.max(1, target || 0, ...allValues);
+  const stepX = maxPointCount > 1 ? chartWidth / (maxPointCount - 1) : 0;
+  const xLabelStep = Math.max(1, Math.ceil(maxPointCount / 6));
+  const xFor = (index) => padding.left + stepX * index;
+  const yFor = (value) => padding.top + chartHeight - (Math.max(0, value) / axisMax) * chartHeight;
+
+  return (
+    <Svg width={width} height={height}>
+      {[0, 0.5, 1].map((tick) => {
+        const y = padding.top + chartHeight - tick * chartHeight;
+        const label = Math.round(axisMax * tick);
+        return (
+          <React.Fragment key={`rom-grid-${tick}`}>
+            <Line
+              x1={padding.left}
+              y1={y}
+              x2={width - padding.right}
+              y2={y}
+              stroke="#cbd5e1"
+              strokeWidth={1}
+            />
+            <SvgText x={padding.left - 8} y={y + 4} fill="#64748b" fontSize="10" textAnchor="end">
+              {label}
+            </SvgText>
+          </React.Fragment>
+        );
+      })}
+      {usableSeries.map((entry) => {
+        const path = entry.points
+          .map((point, index) => `${index === 0 ? 'M' : 'L'} ${xFor(index)} ${yFor(point.value)}`)
+          .join(' ');
+        return entry.points.length > 1 ? (
+          <Path key={`path-${entry.name}`} d={path} fill="none" stroke={entry.color} strokeWidth={3} />
+        ) : null;
+      })}
+      {usableSeries.map((entry) =>
+        entry.points.map((point, index) => (
+          <Circle
+            key={point.key || `${entry.name}-${point.label}-${index}`}
+            cx={xFor(index)}
+            cy={yFor(point.value)}
+            r={4}
+            fill={entry.color}
+          />
+        ))
+      )}
+      {Array.from({ length: maxPointCount }, (_, index) => {
+        const showLabel =
+          maxPointCount <= 6 || index === 0 || index === maxPointCount - 1 || index % xLabelStep === 0;
+        return showLabel ? (
+          <SvgText
+            key={`xlabel-${index}`}
+            x={xFor(index)}
+            y={height - 12}
+            fill="#64748b"
+            fontSize="10"
+            textAnchor="middle"
+          >
+            {index + 1}
+          </SvgText>
+        ) : null;
+      })}
+    </Svg>
   );
 }
 
@@ -1761,6 +2104,71 @@ const styles = StyleSheet.create({
   chipSelected: {
     backgroundColor: '#007AFF',
   },
+  selectionCard: {
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    padding: 12,
+    marginBottom: 12,
+  },
+  selectionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 8,
+  },
+  selectionTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  selectionSubtitle: {
+    fontSize: 12,
+    color: '#475569',
+    marginTop: 2,
+  },
+  selectionToggle: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#2563eb',
+  },
+  metricsListWrap: {
+    gap: 12,
+    marginTop: 12,
+  },
+  metricsList: {
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    borderRadius: 10,
+    backgroundColor: '#f8fafc',
+    padding: 12,
+  },
+  metricsListTitle: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 8,
+  },
+  metricsListRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 5,
+    borderTopWidth: 1,
+    borderTopColor: '#e2e8f0',
+  },
+  metricsListLabel: {
+    fontSize: 13,
+    color: '#475569',
+    fontWeight: '600',
+  },
+  metricsListValue: {
+    fontSize: 13,
+    color: '#0f172a',
+    fontWeight: '700',
+  },
   sensorButton: {
     backgroundColor: '#2563eb',
     paddingHorizontal: 14,
@@ -1786,6 +2194,84 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginVertical: 16,
     width: '100%',
+  },
+  liveRomCard: {
+    marginTop: 14,
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: '#eff6ff',
+    borderWidth: 1,
+    borderColor: '#bfdbfe',
+  },
+  liveRomHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: 12,
+    marginBottom: 10,
+  },
+  liveRomHeaderText: {
+    flex: 1,
+    textAlign: 'right',
+    color: '#1d4ed8',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  liveRomStatsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  liveRomStatBox: {
+    flex: 1,
+    borderRadius: 10,
+    padding: 10,
+    backgroundColor: '#fff',
+    borderWidth: 1,
+    borderColor: '#dbeafe',
+  },
+  liveRomStatLabel: {
+    fontSize: 12,
+    color: '#475569',
+    marginBottom: 4,
+  },
+  liveRomStatValue: {
+    fontSize: 20,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  liveRomStatMeta: {
+    marginTop: 4,
+    fontSize: 11,
+    color: '#64748b',
+  },
+  liveRomChartWrap: {
+    alignItems: 'center',
+  },
+  liveRomLegendRow: {
+    flexDirection: 'row',
+    gap: 14,
+    marginBottom: 8,
+  },
+  liveRomLegendItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  liveRomLegendDot: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+  },
+  liveRomLegendText: {
+    fontSize: 12,
+    color: '#475569',
+    fontWeight: '600',
+  },
+  liveRomCaption: {
+    marginTop: 8,
+    fontSize: 12,
+    color: '#475569',
   },
   barRow: {
     flexDirection: 'row',
@@ -2002,6 +2488,100 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(0,0,0,0.4)',
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  countdownOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15,23,42,0.72)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  countdownCard: {
+    width: '100%',
+    maxWidth: 360,
+    backgroundColor: '#f8fafc',
+    borderRadius: 24,
+    paddingHorizontal: 24,
+    paddingVertical: 28,
+    alignItems: 'center',
+  },
+  countdownTitle: {
+    fontSize: 24,
+    fontWeight: '700',
+    color: '#0f172a',
+    textAlign: 'center',
+  },
+  countdownTopText: {
+    marginTop: 10,
+    fontSize: 20,
+    fontWeight: '600',
+  },
+  countdownTopTextIdle: {
+    color: '#64748b',
+  },
+  countdownTopTextWarn: {
+    color: '#ea580c',
+  },
+  countdownCircle: {
+    width: 140,
+    height: 140,
+    borderRadius: 70,
+    marginTop: 24,
+    marginBottom: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderWidth: 4,
+  },
+  countdownCircleIdle: {
+    borderColor: '#16a34a',
+    backgroundColor: 'rgba(22,163,74,0.12)',
+  },
+  countdownCircleWarn: {
+    borderColor: '#f97316',
+    backgroundColor: 'rgba(249,115,22,0.12)',
+  },
+  countdownNumber: {
+    fontSize: 64,
+    fontWeight: '700',
+  },
+  countdownNumberIdle: {
+    color: '#16a34a',
+  },
+  countdownNumberWarn: {
+    color: '#f97316',
+  },
+  countdownHint: {
+    fontSize: 15,
+    lineHeight: 22,
+    textAlign: 'center',
+    color: '#334155',
+  },
+  countdownStatusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 18,
+  },
+  countdownStatusDot: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    marginRight: 10,
+  },
+  countdownStatusDotIdle: {
+    backgroundColor: '#16a34a',
+  },
+  countdownStatusDotWarn: {
+    backgroundColor: '#f97316',
+  },
+  countdownStatusText: {
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  countdownStatusTextIdle: {
+    color: '#166534',
+  },
+  countdownStatusTextWarn: {
+    color: '#c2410c',
   },
   infoContainer: {
     width: '80%',

@@ -52,6 +52,8 @@ import MonetizationSetup from './src/screens/MonetizationSetup';
 import VirtualTrainingServiceBuilder from './src/screens/VirtualTrainingServiceBuilder';
 import ClientListScreen from './src/screens/ClientListScreen';
 
+import { BleProvider } from './src/context/BleContext';
+
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 const Stack = createNativeStackNavigator();
@@ -59,30 +61,32 @@ const Stack = createNativeStackNavigator();
 export default function App() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
-      <NavigationContainer>
-      <Stack.Navigator screenOptions={{ headerBackTitle: 'Back' }} initialRouteName="Auth">
-        <Stack.Screen name="Auth" component={AuthGate} options={{ title: 'Sign In' }} />
-        <Stack.Screen name="ProfileSetup" component={ProfileSetup} options={{ title: 'Complete Profile' }} />
-        <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'Dashboard' }} />
-        <Stack.Screen name="WorkoutBuilder" component={WorkoutBuilder} options={{ title: 'Build Workout' }} />
-        <Stack.Screen name="CreateWorkout" component={CreateWorkout} options={{ title: 'Create Workout' }} />
-        <Stack.Screen name="WorkoutLibrary" component={WorkoutLibrary} options={{ title: 'My Workouts' }} />
-        <Stack.Screen name="SessionDashboard" component={SessionsDashboard} options={{ title: 'Sessions' }} />
-        <Stack.Screen name="WorkoutRunner" component={WorkoutRunner} options={{ title: 'Run Workout' }} />
-        <Stack.Screen name="ExerciseLibrary" component={ExerciseLibrary} options={{ title: 'Exercise Library' }} />
-        <Stack.Screen name="TrainerDashboard" component={TrainerDashboard} options={{ title: 'Trainer Dashboard' }} />
-        <Stack.Screen name="WorkoutProductBuilder" component={WorkoutProductBuilder} options={{ title: 'Build Workout Product' }} />
-        <Stack.Screen name="TrainerDirectory" component={TrainerDirectory} options={{ title: 'Trainers' }} />
-        <Stack.Screen name="TrainerProfile" component={TrainerProfile} options={{ title: 'Trainer Profile' }} />
-        <Stack.Screen name="MonetizationSetup" component={MonetizationSetup} options={{ title: 'Monetization Setup' }} />
-        <Stack.Screen name='ClientListScreen' component={ClientListScreen} options={{ title: 'Client List' }} />
-        <Stack.Screen
-          name="VirtualTrainingServiceBuilder"
-          component={VirtualTrainingServiceBuilder}
-          options={{ title: 'Virtual Training Service' }}
-        />
-      </Stack.Navigator>
-    </NavigationContainer>
+      <BleProvider>
+        <NavigationContainer>
+          <Stack.Navigator screenOptions={{ headerBackTitle: 'Back' }} initialRouteName="Auth">
+            <Stack.Screen name="Auth" component={AuthGate} options={{ title: 'Sign In' }} />
+            <Stack.Screen name="ProfileSetup" component={ProfileSetup} options={{ title: 'Complete Profile' }} />
+            <Stack.Screen name="Home" component={HomeScreen} options={{ title: 'Dashboard' }} />
+            <Stack.Screen name="WorkoutBuilder" component={WorkoutBuilder} options={{ title: 'Build Workout' }} />
+            <Stack.Screen name="CreateWorkout" component={CreateWorkout} options={{ title: 'Create Workout' }} />
+            <Stack.Screen name="WorkoutLibrary" component={WorkoutLibrary} options={{ title: 'My Workouts' }} />
+            <Stack.Screen name="SessionDashboard" component={SessionsDashboard} options={{ title: 'Sessions' }} />
+            <Stack.Screen name="WorkoutRunner" component={WorkoutRunner} options={{ title: 'Run Workout' }} />
+            <Stack.Screen name="ExerciseLibrary" component={ExerciseLibrary} options={{ title: 'Exercise Library' }} />
+            <Stack.Screen name="TrainerDashboard" component={TrainerDashboard} options={{ title: 'Trainer Dashboard' }} />
+            <Stack.Screen name="WorkoutProductBuilder" component={WorkoutProductBuilder} options={{ title: 'Build Workout Product' }} />
+            <Stack.Screen name="TrainerDirectory" component={TrainerDirectory} options={{ title: 'Trainers' }} />
+            <Stack.Screen name="TrainerProfile" component={TrainerProfile} options={{ title: 'Trainer Profile' }} />
+            <Stack.Screen name="MonetizationSetup" component={MonetizationSetup} options={{ title: 'Monetization Setup' }} />
+            <Stack.Screen name='ClientListScreen' component={ClientListScreen} options={{ title: 'Client List' }} />
+            <Stack.Screen
+              name="VirtualTrainingServiceBuilder"
+              component={VirtualTrainingServiceBuilder}
+              options={{ title: 'Virtual Training Service' }}
+            />
+          </Stack.Navigator>
+        </NavigationContainer>
+      </BleProvider>
     </GestureHandlerRootView>
   );
 }

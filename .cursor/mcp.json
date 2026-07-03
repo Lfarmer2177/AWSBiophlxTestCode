@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "jetro": {
+      "type": "stdio",
+      "command": "/Users/aakash/.jetro/runtime/node-darwin-arm64",
+      "args": [
+        "/Users/aakash/.jetro/mcp-server/index.js"
+      ],
+      "env": {
+        "JET_WORKSPACE": "/Users/aakash/Documents/clients_projects/AWSBiophlxTestCode",
+        "JET_API_URL": "https://api.jetro.ai",
+        "PATH": "/Users/aakash/.jetro/runtime:/Users/aakash/.antigravity-ide/antigravity-ide/bin:/Users/aakash/.antigravity-ide/antigravity-ide/bin:/Users/aakash/.antigravity-ide/antigravity-ide/bin:/Users/aakash/.antigravity-ide/antigravity-ide/bin:/Users/aakash/.antigravity-ide/antigravity-ide/bin:/Users/aakash/.antigravity/antigravity/bin:/Users/aakash/.antigravity/antigravity/bin:/Users/aakash/.antigravity/antigravity/bin:/Users/aakash/.antigravity/antigravity/bin:/Users/aakash/.antigravity/antigravity/bin:/Users/aakash/.antigravity/antigravity/bin:/Users/aakash/.antigravity/antigravity/bin:/Users/aakash/.nvm/versions/node/v20.19.4/bin:/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/System/Cryptexes/App/usr/bin:/usr/bin:/bin:/usr/sbin:/sbin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/local/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/bin:/var/run/com.apple.security.cryptexd/codex.system/bootstrap/usr/appleinternal/bin:/opt/pmk/env/global/bin:/Library/Apple/usr/bin:/Users/aakash/.cargo/bin:/Users/aakash/flutter/bin:/Users/aakash/Library/Android/sdk/emulator:/Users/aakash/Library/Android/sdk/platform-tools:/Users/aakash/.rvm/bin"
+      }
+    }
+  }
+}

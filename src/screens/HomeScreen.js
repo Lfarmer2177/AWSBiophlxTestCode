@@ -9,11 +9,15 @@ import {
   ActivityIndicator,
   Pressable,
   Image,
+  Modal,
+  FlatList,
+  Button
 } from 'react-native';
 import { generateClient } from 'aws-amplify/api';
 import { getCurrentUser, signOut } from 'aws-amplify/auth';
 import { v4 as uuidv4 } from 'uuid';
 import { FontAwesome5, Ionicons } from '@expo/vector-icons';
+// import FontAwesome5 from 'react-native-vector-icons/FontAwesome5';
 import Body from '../Components/react-native-body-highlighter';
 import Colors from '../Theme/Colors';
 import DirectMessageBottomSheet from '../Components/BottomSheet/DirectMessageBottomSheet';
@@ -25,6 +29,9 @@ import {
   listExercises,
   getExerciseQuery,
 } from '../graphql/queries';
+
+import { useBle } from '../context/BleContext';
+import { ExerciseLimb, ExerciseSide } from '../constants/bleConstants';
 
 const LIST_CUSTOMERS_BY_USER = /* GraphQL */ `
   query ListCustomers($user_id: ID!) {
@@ -183,6 +190,23 @@ export default function HomeScreen({ route, navigation }) {
   const [trainerId, setTrainerId] = useState(null);
   const [userGender, setUserGender] = useState('male');
   const [userRole, setUserRole] = useState('');
+  const [openDeviceSettings, setOpenDeviceSettings] = useState(null);
+  const {
+    connectedDevice,
+    secondaryDevice,
+    connecting,
+    showDeviceModal,
+    scannedDevices,
+    deviceSlotToConnect,
+    deviceSettings,
+    batteryLevels,
+    scanAndConnect,
+    disconnect,
+    flashDevice,
+    updateDeviceSetting,
+    handleDeviceSelect,
+    cancelScan,
+  } = useBle();
   const [isMessageSheetVisible, setIsMessageSheetVisible] = useState(false);
   const handleRangeChange = (opt) => {
     setRange(opt);
@@ -237,6 +261,97 @@ export default function HomeScreen({ route, navigation }) {
     if (value === lowest.value) return 'Lowest';
     return 'Middle';
   };
+
+  const renderToggleGroup = (slot, key, options) => {
+    const currentValue = deviceSettings?.[slot]?.[key];
+    return (
+      <View style={styles.deviceToggleGroup}>
+        {options.map((option) => {
+          const selected = currentValue === option.value;
+          return (
+            <Pressable
+              key={`${slot}-${key}-${option.label}`}
+              style={[styles.deviceToggle, selected && styles.deviceToggleActive]}
+              onPress={() => updateDeviceSetting(slot, key, option.value)}
+            >
+              <Text style={[styles.deviceToggleText, selected && styles.deviceToggleTextActive]}>
+                {option.label}
+              </Text>
+            </Pressable>
+          );
+        })}
+      </View>
+    );
+  };
+
+  const renderSensorRow = (label, device, slot) => {
+    const isOpen = openDeviceSettings === slot;
+    const batteryLevel = batteryLevels?.[slot];
+    return (
+      <View style={styles.sensorBox}>
+        <View style={styles.sensorRow}>
+          <View style={styles.sensorTextWrap}>
+            <Text style={styles.sensorLabel}>
+              {label}
+              <Text style={styles.sensorBattery}>
+                {'  '}Battery: {Number.isFinite(batteryLevel) ? `${batteryLevel}%` : '--'}
+              </Text>
+            </Text>
+            <Text style={styles.sensorStatus}>
+              {device ? device.name || device.id : 'Not connected'}
+            </Text>
+          </View>
+          <View style={styles.sensorActions}>
+            <Pressable
+              style={[styles.flashButton, !device && styles.sensorButtonDisabled]}
+              disabled={!device}
+              onPress={() => flashDevice(slot)}
+            >
+              <FontAwesome5 name="bolt" color={device ? '#fff' : '#64748b'} size={15} />
+            </Pressable>
+            {device ? (
+              <Pressable style={[styles.sensorButton, styles.sensorButtonDanger]} onPress={() => disconnect(slot)}>
+                <Text style={styles.sensorButtonText}>Disconnect</Text>
+              </Pressable>
+            ) : (
+              <Pressable
+                style={[styles.sensorButton, connecting && styles.sensorButtonDisabled]}
+                disabled={connecting}
+                onPress={() => scanAndConnect(slot)}
+              >
+                <Text style={[styles.sensorButtonText, connecting && styles.sensorButtonTextDisabled]}>
+                  {connecting ? 'Scanning...' : 'Connect'}
+                </Text>
+              </Pressable>
+            )}
+          </View>
+        </View>
+        <Pressable
+          style={styles.deviceDropdownButton}
+          onPress={() => setOpenDeviceSettings((prev) => (prev === slot ? null : slot))}
+        >
+          <Text style={styles.deviceDropdownText}>
+            Device setup: {isOpen ? 'Hide' : 'Show'}
+          </Text>
+        </Pressable>
+        {isOpen ? (
+          <View style={styles.deviceDropdown}>
+            <Text style={styles.deviceOptionLabel}>Side</Text>
+            {renderToggleGroup(slot, 'side', [
+              { label: 'Left', value: ExerciseSide.left.value },
+              { label: 'Right', value: ExerciseSide.right.value },
+            ])}
+            <Text style={styles.deviceOptionLabel}>Placement</Text>
+            {renderToggleGroup(slot, 'limb', [
+              { label: 'Leg', value: ExerciseLimb.leg.value },
+              { label: 'Arm', value: ExerciseLimb.arm.value },
+            ])}
+          </View>
+        ) : null}
+      </View>
+    );
+  };
+
 
   const fetchExercises = async () => {
     if (Object.keys(exerciseMap).length) return exerciseMap;
@@ -352,7 +467,7 @@ export default function HomeScreen({ route, navigation }) {
           });
           const g = (data?.getUser?.gender || '').toLowerCase();
           if (g === 'female' || g === 'male') setUserGender(g);
-          
+
           // Only fetch/set the role for the logged-in user so we preserve trainer capabilities in the UI
           if (!fromClientList) {
             const r = (data?.getUser?.role || '').toLowerCase();
@@ -370,12 +485,12 @@ export default function HomeScreen({ route, navigation }) {
           query: LIST_TRAINERS_BY_USER,
           variables: { user_id },
         });
-        
+
         console.log('HomeScreen: Fetch trainer data is', tData.listTrainers.items);
-        
+
         // Reverted: Trusting the first item returned
         const trainer = tData?.listTrainers?.items?.[0];
-        
+
         if (trainer?.trainer_id) {
           setTrainerId(trainer.trainer_id);
           console.log('HomeScreen: User has trainer_id:', trainer.trainer_id);
@@ -442,11 +557,11 @@ export default function HomeScreen({ route, navigation }) {
         selected && sessionList.length
           ? sessionList.filter((s) => normalizeDate(s.workout_date || s.created_at) === selected)
           : sessionList.filter((s) => {
-              const dateStr = normalizeDate(s.workout_date || s.created_at);
-              if (!dateStr) return false;
-              const d = new Date(dateStr);
-              return d >= start && d <= end;
-            });
+            const dateStr = normalizeDate(s.workout_date || s.created_at);
+            if (!dateStr) return false;
+            const d = new Date(dateStr);
+            return d >= start && d <= end;
+          });
       if (!targetSessions.length && sessionList.length) {
         const sorted = [...sessionList].sort(
           (a, b) => new Date(b.workout_date || b.created_at) - new Date(a.workout_date || a.created_at)
@@ -904,7 +1019,7 @@ export default function HomeScreen({ route, navigation }) {
         {fromClientList && (
           <View style={styles.topDesignContainer}>
             <View style={styles.actionRow}>
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.bubbleButton}
                 onPress={() => navigation.navigate('WorkoutLibrary', {
                   clientData
@@ -916,7 +1031,7 @@ export default function HomeScreen({ route, navigation }) {
                 <View style={styles.bubbleTailLeft} />
               </TouchableOpacity>
 
-              <View 
+              <View
                 style={[styles.profileContainer, { justifyContent: 'center', alignItems: 'center' }]}
               >
                 {clientData?.Demographic?.profile_image_url ? (
@@ -929,7 +1044,7 @@ export default function HomeScreen({ route, navigation }) {
                 )}
               </View>
 
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.bubbleButton}
                 onPress={() => setIsMessageSheetVisible(true)}
               >
@@ -943,12 +1058,18 @@ export default function HomeScreen({ route, navigation }) {
           </View>
         )}
 
-        {!fromClientList && 
+        {!fromClientList &&
           <>
             <Text style={styles.title}>Welcome back</Text>
             <Text style={styles.subtitle}>Choose where to go</Text>
           </>
         }
+
+        <View style={styles.bluetoothCard}>
+          <Text style={styles.bluetoothTitle}>Bluetooth Sensors</Text>
+          {renderSensorRow('Device 1', connectedDevice, 'primary')}
+          {renderSensorRow('Device 2', secondaryDevice, 'secondary')}
+        </View>
 
         <View style={styles.grid}>
           {(() => {
@@ -962,7 +1083,7 @@ export default function HomeScreen({ route, navigation }) {
                 <TouchableOpacity
                   key={action.key}
                   style={[
-                    styles.card, 
+                    styles.card,
                     action.accent && styles.cardAccent,
                     isCardDisabled && { backgroundColor: '#f1f5f9', opacity: 0.5 }
                   ]}
@@ -974,7 +1095,7 @@ export default function HomeScreen({ route, navigation }) {
                   disabled={isCardDisabled}
                 >
                   <Text style={[
-                    styles.cardText, 
+                    styles.cardText,
                     action.accent && styles.cardTextAccent,
                     isCardDisabled && { color: '#94a3b8' }
                   ]}>
@@ -1141,6 +1262,36 @@ export default function HomeScreen({ route, navigation }) {
           </TouchableOpacity>
         )}
       </ScrollView>
+
+      <Modal visible={showDeviceModal} transparent animationType="slide">
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>
+              {deviceSlotToConnect === 'secondary'
+                ? 'Select Device 2'
+                : 'Select Device 1'}
+            </Text>
+            {connecting ? (
+              <Text style={styles.modalText}>Scanning for nearby Bluetooth devices...</Text>
+            ) : scannedDevices.length === 0 ? (
+              <Text style={styles.modalText}>No devices found. Try scanning again.</Text>
+            ) : null}
+            <FlatList
+              style={styles.deviceList}
+              data={scannedDevices}
+              keyExtractor={(item) => item.id}
+              renderItem={({ item }) => (
+                <TouchableOpacity onPress={() => handleDeviceSelect(item)} style={styles.deviceRow}>
+                  <Text style={styles.deviceName}>{item.name || 'Unnamed device'}</Text>
+                  <Text style={styles.deviceId}>{item.id}</Text>
+                </TouchableOpacity>
+              )}
+            />
+            <Button title="Cancel" onPress={cancelScan} />
+          </View>
+        </View>
+      </Modal>
+
       <DirectMessageBottomSheet
         isVisible={isMessageSheetVisible}
         onClose={() => setIsMessageSheetVisible(false)}
@@ -1159,7 +1310,7 @@ const styles = StyleSheet.create({
   container: {
     // padding: 20,
     paddingHorizontal: 20,
-    paddingBottom:20,
+    paddingBottom: 20,
     paddingBottom: 32,
   },
   title: {
@@ -1526,6 +1677,171 @@ const styles = StyleSheet.create({
     fontWeight: 'bold',
     color: '#000',
     marginTop: 10,
+  },
+  bluetoothCard: {
+    marginBottom: 16,
+    padding: 14,
+    borderRadius: 12,
+    backgroundColor: '#f8fafc',
+    borderWidth: 1,
+    borderColor: '#e2e8f0',
+    gap: 10,
+  },
+  bluetoothTitle: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  sensorBox: {
+    gap: 8,
+  },
+  sensorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  sensorTextWrap: {
+    flex: 1,
+  },
+  sensorLabel: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#0f172a',
+  },
+  sensorBattery: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#16a34a',
+  },
+  sensorStatus: {
+    marginTop: 2,
+    fontSize: 12,
+    color: '#64748b',
+  },
+  sensorActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  flashButton: {
+    width: 38,
+    height: 38,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#0f172a',
+  },
+  deviceDropdownButton: {
+    alignSelf: 'flex-start',
+    paddingVertical: 4,
+    paddingHorizontal: 2,
+  },
+  deviceDropdownText: {
+    color: '#2563eb',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  deviceDropdown: {
+    gap: 8,
+    paddingTop: 2,
+    paddingBottom: 4,
+  },
+  deviceOptionLabel: {
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  deviceToggleGroup: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  deviceToggle: {
+    paddingVertical: 8,
+    paddingHorizontal: 14,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#cbd5e1',
+    backgroundColor: '#fff',
+  },
+  deviceToggleActive: {
+    backgroundColor: '#0f172a',
+    borderColor: '#0f172a',
+  },
+  deviceToggleText: {
+    color: '#475569',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  deviceToggleTextActive: {
+    color: '#fff',
+  },
+  sensorButton: {
+    backgroundColor: '#0f172a',
+    paddingHorizontal: 14,
+    paddingVertical: 9,
+    borderRadius: 8,
+    minWidth: 96,
+    alignItems: 'center',
+  },
+  sensorButtonDanger: {
+    backgroundColor: '#d0494b',
+  },
+  sensorButtonDisabled: {
+    backgroundColor: '#e2e8f0',
+  },
+  sensorButtonText: {
+    color: '#fff',
+    fontWeight: '700',
+    fontSize: 13,
+  },
+  sensorButtonTextDisabled: {
+    color: '#64748b',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(15, 23, 42, 0.45)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalCard: {
+    width: '100%',
+    maxWidth: 420,
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 18,
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#0f172a',
+    marginBottom: 12,
+    textAlign: 'center',
+  },
+  modalText: {
+    marginBottom: 16,
+    color: '#475569',
+    textAlign: 'center',
+  },
+  deviceList: {
+    maxHeight: 220,
+    width: '100%',
+  },
+  deviceRow: {
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e2e8f0',
+  },
+  deviceName: {
+    fontSize: 16,
+    color: '#0f172a',
+    fontWeight: '700',
+  },
+  deviceId: {
+    marginTop: 2,
+    fontSize: 12,
+    color: '#64748b',
   },
 });
 
